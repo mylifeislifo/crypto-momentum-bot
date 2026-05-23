@@ -75,14 +75,21 @@ class BarBuilder:
         for interval in self._intervals:
             sec = _INTERVAL_SECS[interval]
             current_bar_ts = (now_ts // sec) * sec
-            last = self._last_bar_ts.get(interval, current_bar_ts)
+            last = self._last_bar_ts.get(interval)
+
+            if last is None:
+                # first call: anchor to the oldest tick in the buffer so bars
+                # spanning the first period are emitted correctly
+                first_ts = self._ticks[0]["ts"] if self._ticks else now_ts
+                last = (first_ts // sec) * sec
+                self._last_bar_ts[interval] = last
 
             if current_bar_ts > last:
-                # build bar for the completed period [last, current_bar_ts)
+                # a new bar period has started: build bar for [last, current_bar_ts)
                 bar = self._build_bar(interval, sec, last, current_bar_ts)
                 if bar is not None:
                     bars.append(bar)
-                    self._last_bar_ts[interval] = current_bar_ts
+                self._last_bar_ts[interval] = current_bar_ts
 
         return bars
 

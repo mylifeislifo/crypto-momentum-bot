@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "btc-futures-bot"
 version = "0.2.0"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
   # Exchange connectivity
   "python-binance>=1.0.19",
