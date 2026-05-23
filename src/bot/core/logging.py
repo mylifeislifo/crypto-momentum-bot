@@ -1,9 +1,18 @@
 import logging
+import logging.handlers
+from pathlib import Path
+from typing import Optional
 
 import structlog
 
+_LOG_DIR = Path("logs")
 
-def setup_logging(level: str = "INFO", json_format: bool = True) -> None:
+
+def setup_logging(
+    level: str = "INFO",
+    json_format: bool = True,
+    log_file: Optional[Path] = None,
+) -> None:
     log_level = getattr(logging, level.upper(), logging.INFO)
 
     shared_processors: list = [
@@ -31,12 +40,27 @@ def setup_logging(level: str = "INFO", json_format: bool = True) -> None:
         foreign_pre_chain=shared_processors,
     )
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-
     root = logging.getLogger()
     root.handlers.clear()
-    root.addHandler(handler)
+
+    # always log to stdout
+    stdout_handler = logging.StreamHandler()
+    stdout_handler.setFormatter(formatter)
+    root.addHandler(stdout_handler)
+
+    # when json_format=True (production), also write to rotating file
+    if json_format:
+        target = log_file or (_LOG_DIR / "btcbot.log")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            target,
+            maxBytes=50 * 1024 * 1024,   # 50 MB per file
+            backupCount=10,               # keep 10 rotated files (~500 MB total)
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+
     root.setLevel(log_level)
 
     # suppress noisy third-party loggers
