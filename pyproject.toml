@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "btc-futures-bot"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+  # Exchange connectivity
+  "python-binance>=1.0.19",
+  "aiohttp>=3.9",
+
+  # Data processing (hot paths)
+  "polars>=0.20",
+  "numpy>=1.26",
+
+  # Configuration & validation
+  "pydantic>=2.7",
+  "pydantic-settings>=2.2",
+  "PyYAML>=6.0",
+  "python-dotenv>=1.0",
+
+  # Async utilities
+  "tenacity>=8.3",
+  "websockets>=12.0",
+
+  # Logging & CLI
+  "structlog>=24.1",
+  "typer>=0.12",
+
+  # Time
+  "pytz>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.4",
+  "mypy>=1.10",
+  "hypothesis>=6.100",
+  "aioresponses>=0.7",
+]
+
+[project.scripts]
+btcbot = "bot.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bot"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true

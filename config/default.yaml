@@ -1,0 +1,56 @@
+mode: paper
+dry_run: true
+
+exchange:
+  symbol: BTCUSDT
+  max_leverage: 2
+  margin_mode: ISOLATED
+  fee_maker_bps: 2.0
+  fee_taker_bps: 5.0
+
+data:
+  ob_depth_levels: 20
+  ob_interval_ms: 100
+  oi_poll_sec: 60
+  sentiment_poll_sec: 3600
+  bar_intervals: ["5m", "15m"]
+
+strategy:
+  ob_imbalance_long_threshold: 0.30
+  ob_imbalance_short_threshold: -0.30
+  oi_delta_long_threshold_pct: 0.003
+  oi_delta_short_threshold_pct: -0.003
+  funding_long_bias_threshold: -0.0001
+  funding_short_trigger: 0.0001
+  fear_greed_short_min: 75
+  fear_greed_long_max: 50
+  cvd_lookback_bars: 3
+  spoof_cancel_window_snapshots: 2
+  spoof_size_multiplier: 3.0
+
+risk:
+  risk_per_trade: 0.01
+  max_positions: 3
+  long_sl_pct: -0.018
+  short_sl_pct: -0.0075
+  trail_atr_multiplier: 1.5
+  trail_lookback_bars: 5
+  daily_loss_limit: -0.03
+  circuit_reset_hour_kst: 9
+  long_bias_window: 20
+  long_bias_min: 0.80
+  short_max_daily: 1
+
+execution:
+  retry_max: 3
+  retry_backoff_sec: 0.5
+  sl_place_timeout_sec: 2.0
+
+notifications:
+  rate_limit_sec: 1.0
+  queue_max: 100
+
+logging:
+  level: INFO
+  json_format: false
+  log_dir: logs

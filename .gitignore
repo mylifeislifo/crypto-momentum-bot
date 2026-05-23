@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+logs/
+*.log
+paper_state.json
+recorded_ticks/
+*.ndjson
