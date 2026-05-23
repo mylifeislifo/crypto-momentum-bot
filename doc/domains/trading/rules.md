@@ -126,8 +126,64 @@ def place_order(symbol: str, qty: Decimal, side: str):
 
 ---
 
-## 7. 예외 케이스 누적
+## 7. (예약) — 본 번호는 향후 신규 표준 진입용으로 비워둠. 추가 시 `skill-define.md` §3 Spec 7항목 승인 필수.
+
+---
+
+## 8. 퀀트 실행 표준 (Quant Execution Standards)
+
+본 섹션은 백테스트·데이터 처리·시그널 생성 시 적용되는 실행 환경·데이터 표준이다. **§1 하드 안전장치는 본 섹션보다 항상 우선**한다.
+
+### 8.1 연산 환경 (Apple Silicon · ARM64)
+
+- **벡터화 우선**: `multiprocessing`/`joblib`의 워커 분기보다 Numpy·Pandas·**Polars 벡터 연산**을 1순위로 작성. 제너레이터 루프는 Polars로 대체 가능하면 대체.
+- **메모리 할당 최소화**: 데이터프레임 복사를 줄이기 위해 `inplace=True`를 적극 활용. 32GB RAM 환경에서 인메모리 연산이 끊기지 않도록 설계.
+- **Numba · 구형 JIT 회피**: ARM64에서 호환성 이슈가 잦은 C-extension 의존 라이브러리 대신 **Polars**를 우선 사용.
+- **워커 수 동적 제한**: M시리즈의 효율·성능 코어 혼합을 고려, 워커 수는 `CPU 코어 × 0.8`로 제한.
+- **§1.2 Decimal 호환**: Polars 사용 시 가격·수량 컬럼은 `pl.Decimal(precision, scale)` dtype 또는 작업 종료 직전 `Decimal(str(x))` 변환. `float` 직접 노출 금지.
+
+```python
+import os
+import polars as pl
+
+WORKER_RATIO = 0.8
+MAX_WORKERS = max(1, int(os.cpu_count() * WORKER_RATIO))
+
+df = df.with_columns(pl.col("price").cast(pl.Decimal(precision=18, scale=8)))
+```
+
+### 8.2 매크로 · 교차 자산 데이터
+
+- **Lead-Lag 입력 파라미터화**: 단일 티커 데이터만 보지 말고, BTC·국채 금리·DXY 등 타 자산과의 선행-지연 상관관계 계산이 가능한 입력 파라미터를 전략 클래스 시그니처에 포함.
+- **유동성 지표 병합**: SOFR 금리, 연준 Net Liquidity 등 매크로 지표를 전처리 단계에서 데이터프레임에 `merge`하는 함수 구조를 기본 포함.
+- **결측치 처리 일관성**: 주식·크립토·매크로 시계열의 휴장일 차이로 발생하는 NaN은 **`ffill()`로 일관 처리**. 다른 방식(`bfill`·보간) 사용 시 사유 주석 필수.
+
+### 8.3 미국 시장 세션 처리
+
+- **타임존 저장·표시 분리**: 모든 Timestamp는 **내부 UTC 저장**, 조건문·로그 출력은 **`pytz.timezone('US/Eastern')` (EST/EDT) 변환** 후 사용.
+- **세션 분리 플래그**: 로직 내에 정규장(RTH: 09:30~16:00 EST) ↔ 시간외장(ETH: Pre-market & After-hours) 구분 플래그 필수 구현.
+- **오프닝 진입 차단**: 명시적 override 없는 한, **개장 직후 15분(09:30~09:45 EST) 신규 진입 차단** (§1 하드 안전장치에 준함).
+- **ETH 기본 차단**: 시간외장(ETH) 진입은 기본 차단. 활성화 시 전략 클래스 인자로 `allow_eth=True` 명시 요구.
+
+```python
+import pytz
+from datetime import time
+
+EST = pytz.timezone("US/Eastern")
+RTH_OPEN = time(9, 30)
+RTH_BLOCK_UNTIL = time(9, 45)
+RTH_CLOSE = time(16, 0)
+
+def is_blocked_entry(ts_utc) -> bool:
+    ts_est = ts_utc.astimezone(EST).time()
+    return RTH_OPEN <= ts_est < RTH_BLOCK_UNTIL  # 09:30~09:45 차단
+```
+
+---
+
+## 9. 예외 케이스 누적
 
 - **[2026.04]** 8코인 전략보다 5코인 필터링이 안정적 수익률 → 코인 풀은 정기 검증 후 축소 권장
 - **[2026.05.04]** EXPOSURE 0.25 → 0.30 + BE_TRIGGER 0.01 도입. 백테스트에서 샤프 비율 개선 확인 후 반영
 - **[2026.05]** Grok 봇이 이월잔금 포함값으로 보고하면서 누적 수익률이 부풀려진 사례 → 리포트 포맷에 "투자 시작일" 명시 + 원금 기준 명확히
+- **[2026.05.23]** §8 신설 — 구 `skill_apple_silicon_backtest` / `skill_macro_liquidity_indicators` / `skill_nasdaq_session_handling` 3개 흡수 후 삭제. 동시에 구 `skill_meta_generator` / `skill_harness_scaffolder`는 `skill-define.md`가 흡수 → 삭제.
