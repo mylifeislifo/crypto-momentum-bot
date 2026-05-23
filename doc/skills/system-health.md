@@ -38,10 +38,10 @@ echo "kern.maxvnodes=600000" | sudo tee -a /etc/sysctl.conf
 |------|--------|
 | 체크 주기 | 5분 |
 | 임계치 | 4GB (조정 가능, 시스템 동결 전 단계) |
-| False positive 방지 | 종료 결정 전 **1회 재측정** |
-| 로그 위치 | `~/.local/share/watchdog/` |
-| 로그 형식 | JSON Lines |
-| 보관 기간 | 최소 30일 |
+| False positive 방지 | 종료 결정 전 **1회 재측정** (`skills/progressive-gate.md §2.5` 자체 보고 검증 결합) |
+| 로그 위치 | `~/.local/share/watchdog/*.jsonl` (`skills/audit-log.md §2.2`) |
+| 로그 형식 | JSON Lines (`skills/audit-log.md §2.1` SSOT) |
+| 보관 기간 | 최소 30일 (`skills/audit-log.md §2.5` 중기 등급) |
 
 종료 후 알림(Telegram) 발송으로 사용자가 인지하도록 함.
 
@@ -55,7 +55,7 @@ echo "kern.maxvnodes=600000" | sudo tee -a /etc/sysctl.conf
 신규 등록 시 다음 3종을 **반드시 함께** 명시한다:
 
 1. **실행 주기** (예: 30분)
-2. **실행 결과 로그 경로** (예: `~/.hermes/cron/output/<name>.log`)
+2. **실행 결과 로그 경로** (예: `~/.hermes/cron/output/<name>.log` — JSON Lines 양식·보관 30일은 `skills/audit-log.md §2.1·§2.2·§2.5` SSOT 적용)
 3. **실패 시 알림 채널** (Telegram 등)
 
 #### 침묵 감지
@@ -79,3 +79,4 @@ echo "kern.maxvnodes=600000" | sudo tee -a /etc/sysctl.conf
 - **[2026.05.12]** `kern.maxvnodes` 미설정 상태로 7일 가동 → 앱 실행 불가 동결. 영구 설정 후 1년 가동 안정성 확보
 - **[2026.05.21]** Hermes cron이 prompt 변경 후 결과 누락 → cron 실행 이력은 `~/.hermes/cron/output/` 직접 확인. CLI 보고만 신뢰 금지(bot-ops.md 2.2 audit 원칙 적용)
 - **[2026.05.21]** Claude Code / Dispatch 메모리 4GB 임계치 워치독 도입 → 시스템 동결 0건
+- **[2026.05.23]** §2.2 워치독 로그·§2.3 cron 출력의 JSON Lines 양식·위치·보관이 `skills/audit-log.md`(신설) SSOT의 시스템 안정성 구체화임을 명문화. 워치독 종료 결정 1회 재측정은 `skills/progressive-gate.md §2.5` 인용.

@@ -31,7 +31,7 @@
    ```
 4. **새 소스 배포 / config 갱신** (백업 동반 — 2.4 참조)
 5. **재시작 명령 실행**
-6. **시작 직후 5초 내 로그 확인**으로 정상 가동 검증
+6. **시작 직후 5초 내 로그 확인**으로 정상 가동 검증 — `skills/progressive-gate.md §2.2`(Sandbox→Small 통과 기준)의 봇 운영 구체화
    ```bash
    sleep 5 && tail -n 30 <log_file>
    ```
@@ -43,10 +43,12 @@
 - **즉시 신뢰 금지**. 다음 중 **하나 이상**으로 직접 검증한다:
   - **파일 시스템**: `ls -la`, `cat`, `grep`로 실제 변경 확인
   - **프로세스**: `ps`, `lsof`, `netstat`로 실제 가동 확인
-  - **로그**: `tail -n 50 <log>`로 최근 출력 직접 확인
+  - **로그**: `tail -n 50 <log>`로 최근 출력 직접 확인 (로그 양식·파싱은 `skills/audit-log.md §2.3`)
   - **외부 동작**: `curl`로 엔드포인트 실제 응답 확인
 - 검증 결과를 사용자에게 보고. 봇 주장과 다르면 **명시적으로 차이 지적**.
 - 신뢰성 0 원칙은 **자기 자신(클로드)에게도 동일 적용**. "수정했다"고 답하기 전에 직접 검증.
+
+본 절은 doc 전체에서 "봇 발언 신뢰성 0"의 단일 진리원(SSOT)이다.
 
 ### 2.3 다중 인스턴스 관리
 
@@ -68,6 +70,7 @@
 ```bash
 cp <target> <target>.before_<change>_$(date +%Y%m%d_%H%M%S)
 ```
+본 절은 doc 전체에서 "변경 전 백업"의 SSOT이다 (`progressive-gate.md §2.3`, `infra-debug.md §2.3`이 인용).
 
 ---
 
@@ -76,3 +79,4 @@ cp <target> <target>.before_<change>_$(date +%Y%m%d_%H%M%S)
 - **[2026.05]** cloudflared 데몬 재시작 시 config가 갈리는 사례 → 재시작 후 반드시 `sudo cat /etc/cloudflared/config.yml`로 적용 여부 검증
 - **[2026.05]** Hermes 봇이 "memory에 추가했다"고 주장했으나 실제 파일 미변경 사례 → CLI 직접 편집으로 우회. memory.add 도구 자체가 content 파라미터를 누락하는 버그 확인됨
 - **[2026.05]** 봇이 "테스트 성공했다"고 자체 보고했으나 cron prompt가 실제로는 갱신되지 않은 사례 → `~/.hermes/cron/output/*.log` 직접 확인 필수
+- **[2026.05.23]** §2.1 #6 시작 직후 5초 로그 검증이 `skills/progressive-gate.md`(신설) SSOT의 봇 운영 구체화임을 명문화. 로그 양식·직접 파싱은 `skills/audit-log.md`(신설) 인용.

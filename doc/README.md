@@ -9,9 +9,11 @@ doc/
 ├── skill-define.md           # [메타] 스킬·룰 작성·수정 표준 (모든 doc 변경의 진입 검문소)
 │
 ├── skills/                   # 크로스커팅 스킬 (도메인 무관, 동사 단위)
-│   ├── bot-ops.md            # 프로세스 수명주기 + 외부 발언 검증(audit)
+│   ├── bot-ops.md            # 프로세스 수명주기 + 외부 발언 검증(audit) — "신뢰성 0" SSOT
 │   ├── system-health.md      # 맥미니 안정성 + 모니터링 통합
-│   └── infra-debug.md        # Tunnel/OAuth/config drift 복구 런북
+│   ├── infra-debug.md        # Tunnel/OAuth/config drift 복구 런북
+│   ├── progressive-gate.md   # 비가역 행위 전 점진 진입(Sandbox→Small→Full) — 게이트 SSOT
+│   └── audit-log.md          # 구조화 로그(JSON Lines) + 직접 파싱 표준 — 로그 인프라 SSOT
 │
 └── domains/                  # 도메인별 절대 규칙 (rules.md)
     ├── trading/rules.md      # 레버리지·수치·paper 게이트·상태 포맷·파라미터·퀀트 실행 표준
@@ -23,7 +25,7 @@ doc/
 
 0. **새 파일 추가·기존 변경 시 `skill-define.md` 우선** (중량 변경은 5점 체크 → Spec 7항목 승인 → 본문 → 자기검증 / 경량 변경은 자기검증만 — `skill-define.md` §1.1 참조)
 1. **도메인 작업 진입 시** 해당 `domains/<name>/rules.md`를 컨텍스트에 우선 흡수
-2. **크로스커팅 동작(배포·상태·감사 등) 발생 시** `skills/` 참조
+2. **크로스커팅 동작(배포·상태·감사·게이트·로그 등) 발생 시** `skills/` 참조
 3. 각 파일의 "예외 케이스 누적" 섹션에 실전에서 학습된 룰을 지속 추가
 4. 변경 시 날짜 + 변경 내용 + 사유를 해당 섹션에 기록
 

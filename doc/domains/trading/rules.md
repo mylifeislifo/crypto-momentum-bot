@@ -41,6 +41,8 @@ qty = 0.001                      # 금지 (부동소수점 오차)
 
 CLI에서 실거래 가동 시 `--i-understand-real-money` 같은 명시적 플래그를 요구.
 
+> 본 게이트는 `skills/progressive-gate.md §2.1·§2.2`(Sandbox→Small→Full 일반 원칙) + §2.4(사용자 명시 승인)의 트레이딩 도메인 구체화이다. 위 수치(paper 7일·시드 10% 등)가 일반 원칙보다 우선한다.
+
 ---
 
 ## 2. 상태 리포트 표준 포맷
@@ -113,7 +115,7 @@ def place_order(symbol: str, qty: Decimal, side: str):
 3. 봇의 텔레그램 보고값과 대조
 4. **불일치 시 단일 거래 단위로 역추적**
 
-이는 `skills/bot-ops.md`의 "봇 발언 신뢰성 0" 원칙(SSOT: bot-ops §2.2)의 트레이딩 도메인 구현이다.
+이는 `skills/bot-ops.md`의 "봇 발언 신뢰성 0" 원칙(SSOT: bot-ops §2.2)의 트레이딩 도메인 구현이다. 거래 로그의 JSON Lines 양식·필수 필드·직접 파싱 절차는 `skills/audit-log.md §2.1·§2.3` SSOT를 따른다.
 
 ---
 
@@ -184,3 +186,4 @@ def is_blocked_entry(ts_utc) -> bool:
 - **[2026.05]** Grok 봇이 이월잔금 포함값으로 보고하면서 누적 수익률이 부풀려진 사례 → 리포트 포맷에 "투자 시작일" 명시 + 원금 기준 명확히
 - **[2026.05.23]** §7 신설 (구 §8) — 구 `skill_apple_silicon_backtest` / `skill_macro_liquidity_indicators` / `skill_nasdaq_session_handling` 3개 흡수 후 삭제. 구 `skill_meta_generator` / `skill_harness_scaffolder`는 `skill-define.md`가 흡수 → 삭제.
 - **[2026.05.23 v2]** 메타 리뷰 반영 — (a) 구 §7 (예약) 삭제로 §8→§7, §9→§8 재번호. (b) §7.1 Polars Decimal 호환 단정을 "Float 강제 cast 가능성" 명시로 약화 — 최종 출력·주문 직전 단계에서 `Decimal(str(x))` 재변환 검증 명문화. (c) §5에 bot-ops §2.2가 "신뢰성 0" SSOT임을 명시.
+- **[2026.05.23 v3]** §1.3 게이트가 `skills/progressive-gate.md`(신설) SSOT의 트레이딩 도메인 구체화임을 명문화. §5 거래 로그 직접 파싱·JSON Lines 양식이 `skills/audit-log.md`(신설) SSOT를 따름을 인용.
