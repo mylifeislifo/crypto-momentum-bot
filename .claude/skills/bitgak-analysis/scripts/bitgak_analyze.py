@@ -24,9 +24,9 @@ except:
     FONT_PROP = fm.FontProperties()
 plt.rcParams['axes.unicode_minus'] = False
 
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 # 1. 데이터 수집
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 def fetch(ticker, start='2020-01-01'):
     tk = yf.Ticker(ticker)
     wk = tk.history(start=start, interval='1wk').reset_index()
@@ -39,9 +39,9 @@ def fetch(ticker, start='2020-01-01'):
     
     return wk, daily
 
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 # 2. MAD 아웃라이어 필터
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 def mad_filter(wk, mult=2.5):
     log_c = np.log(wk['close'].values)
     med = np.median(log_c)
@@ -55,9 +55,9 @@ def mad_filter(wk, mult=2.5):
     removed = (~mask).sum()
     return wk[mask].copy().reset_index(drop=True), removed, thresh
 
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 # 3. 채널 탐지
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 def find_channel(wk, direction, order=3):
     wk = wk.copy().reset_index(drop=True)
     wk['log_high'] = np.log(wk['high'])
@@ -133,9 +133,9 @@ def find_channel(wk, direction, order=3):
                 'ep': epoch, 't': best['t'], 'w': best['w'],
                 'ad': da, 'bd': db, 'ap': np.exp(la), 'bp': np.exp(lb)}
 
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 # 4. 분석 & 판정
-# ═════════════════════════════════════════════
+# ═══════════════════════════════════════════
 def analyze(ticker, start='2020-01-01', use_filter=True, output_dir='/mnt/user-data/outputs'):
     print(f'\n{"="*50}')
     print(f'  {ticker} 빗각 분석')
