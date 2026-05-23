@@ -48,7 +48,7 @@
 - **state mismatch**는 보통 SSH 환경 + 로컬 브라우저 콜백 불일치가 원인
   - 해결: 인증은 **동일 머신**(로컬 GUI)에서 수행
   - 또는 device-flow 옵션 사용 (provider 지원 시)
-- 인증 성공 후 토큰 파일 권한 확인: `chmod 600 ~/.<service>/auth.json`
+- 인증 성공 후 토큰 파일 권한 확인: `chmod 600 ~/.<service>/auth.json` (`security/rules.md` §1.2 파일 권한 표준)
 
 ### 2.3 Config Drift 방지
 
@@ -58,10 +58,7 @@
 2. **실제 로드된 config** — CLI `<service> config show` (메모리 상 값)
 3. **환경변수 override 여부** — `env | grep <SERVICE>_`
 
-변경 전 백업은 **필수**:
-```bash
-cp <config> <config>.before_<change>_$(date +%Y%m%d_%H%M%S)
-```
+변경 전 타임스탬프 백업은 **필수** — 표준 절차는 `skills/bot-ops.md` §2.4 참조.
 
 ### 2.4 진단 결과 보고 표준
 
