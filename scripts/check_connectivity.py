@@ -13,11 +13,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import argparse
-import logging
+
+import structlog
 
 from bot.config.loader import load_config
 from bot.core.logging import setup_logging
-from bot.data import bar_builder as _bar_builder_mod
 from bot.data import pipeline_oi_funding, pipeline_orderbook, pipeline_sentiment
 from bot.data.bar_builder import BarBuilder
 from bot.core.enums import Interval
@@ -26,7 +26,7 @@ from bot.core.enums import Interval
 async def main(duration: int, config_path: str) -> None:
     config, secrets = load_config(config_path)
     setup_logging(config.logging.level, json_format=False)
-    log = logging.getLogger("check_connectivity")
+    log = structlog.get_logger("check_connectivity")
 
     ob_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
     trade_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -56,7 +56,7 @@ async def main(duration: int, config_path: str) -> None:
         ),
     ]
 
-    log.info(f"Running connectivity check for {duration}s...")
+    log.info("connectivity_check.started", duration_sec=duration)
 
     await asyncio.sleep(duration)
 
