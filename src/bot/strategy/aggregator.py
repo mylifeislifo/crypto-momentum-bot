@@ -4,25 +4,32 @@ Runs as a single asyncio task. Drains all four input queues on every cycle
 without blocking on any single one (non-blocking get_nowait). The 5m bar
 arrival is the primary evaluation trigger.
 
-Queue topology (all reads, no writes except signal_queue):
+Queue topology (reads):
   ob_queue        → ctx.latest_ob
   oi_queue        → ctx.latest_oi
   sentiment_queue → ctx.latest_sentiment
   bar_queue       → ctx.recent_bars_5m / ctx.recent_bars_15m
 
+Queue topology (writes):
+  signal_queue    ← Signal on confluence
+  trail_bar_queue ← Bar (5m) forwarded to order_manager for trailing stop updates
+
 On each cycle where a new 5m bar was just received AND ctx.is_ready():
   → calls confluence.evaluate(ctx) → puts Signal to signal_queue (if non-None)
+  → always forwards the new bar to trail_bar_queue
 """
 
 import asyncio
-import logging
+from typing import Optional
+
+import structlog
 
 from ..config.schema import AppConfig
 from ..core.enums import Interval
 from .base import StrategyContext
 from .confluence import ConfluenceStrategy
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _POLL_INTERVAL_SEC = 0.10   # 100ms drain cadence (matches OB snapshot rate)
 _MIN_BARS_READY = 3         # minimum 5m bars before evaluating
@@ -35,6 +42,7 @@ async def run(
     bar_queue: asyncio.Queue,
     signal_queue: asyncio.Queue,
     config: AppConfig,
+    trail_bar_queue: Optional[asyncio.Queue] = None,
 ) -> None:
     ctx = StrategyContext()
     engine = ConfluenceStrategy(config.strategy, config.risk)
@@ -78,6 +86,11 @@ async def run(
                     ctx.ingest_bar(bar)
                     if bar.interval == Interval.M5:
                         new_5m_bar = True
+                        if trail_bar_queue is not None:
+                            try:
+                                trail_bar_queue.put_nowait(bar)
+                            except asyncio.QueueFull:
+                                pass
                         logger.debug(
                             "aggregator.new_bar",
                             interval="5m",
