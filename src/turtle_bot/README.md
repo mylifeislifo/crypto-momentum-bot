@@ -29,6 +29,20 @@
 | `audit-log §2.1` JSON Lines | 결과·거래 로그 `ts/source/event/level/payload`. payload는 `trading §5` `{symbol,side,qty,price,pnl}` |
 | `bot-ops §2.2` 봇 발언 신뢰성 0 | 자기 자신 포함. 결과 직접 파싱으로 검증 |
 
+## 데이터 소스 (M1 2단계)
+
+- 거래소: **비트겟 USDT-M 무기한 선물** (실거래 예정 거래소와 일치). 공개
+  klines라 API 키 불필요.
+- 엔드포인트: Bitget v2 `GET /api/v2/mix/market/history-candles`
+  (`productType=usdt-futures`, `granularity=1D`), `endTime` 기준 역방향
+  페이지네이션.
+- 코드: `data/fetcher.py`(aiohttp + tenacity 재시도) → Polars DF(OHLCV
+  `Decimal` 보존·ts UTC) → `data/cache.py` parquet 캐시(`data/turtle_bot_cache/`).
+- ⚠️ **미검증**: 작성 시점 `api.bitget.com`이 네트워크 차단 상태라 라이브
+  호출은 한 번도 안 됨. 파싱·페이지네이션은 오프라인(`aioresponses`)으로
+  테스트 통과. **정책 허용 후 1회 실호출로 candle 배열 필드 순서·granularity
+  표기 검증 필수** (`bot-ops §2.2` 신뢰성 0).
+
 ## 마일스톤
 
 | | 범위 | 상태 |
