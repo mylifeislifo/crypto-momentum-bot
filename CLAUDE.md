@@ -38,6 +38,7 @@ skill-define.md             ← 메타 (doc/ 자체 변경 시)
 @doc/skills/infra-debug.md
 @doc/skills/progressive-gate.md
 @doc/skills/audit-log.md
+@doc/skills/signal-validation.md
 
 ## 검증 원칙 (모든 작업 공통)
 
