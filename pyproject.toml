@@ -47,7 +47,7 @@ dev = [
 btcbot = "bot.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bot"]
+packages = ["src/bot", "src/turtle_bot"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
