@@ -1,0 +1,27 @@
+name: doc-sync
+
+on:
+  push:
+    paths:
+      - "doc/**"
+      - "CLAUDE.md"
+      - "CLAUDE_BOOTSTRAP.md"
+      - "scripts/check_doc_sync.py"
+      - ".github/workflows/doc-sync.yml"
+  pull_request:
+    paths:
+      - "doc/**"
+      - "CLAUDE.md"
+      - "CLAUDE_BOOTSTRAP.md"
+      - "scripts/check_doc_sync.py"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: doc/ ↔ bootstrap entry points in sync
+        run: python scripts/check_doc_sync.py
