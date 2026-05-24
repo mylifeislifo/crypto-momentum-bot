@@ -9,15 +9,30 @@
 
 ---
 
-## 0. 가장 먼저 할 일 (Bootstrap Order)
+## 0. 가장 먼저 할 일 — `doc/` 전체 무조건 흡수
 
-1. **이 파일 통독** (현재 위치)
-2. `CLAUDE.md` 읽기 — 즉시 적용 핵심 룰 5종 + `@doc/...` 우선순위
-3. `doc/README.md` — 운영 매뉴얼 구조
-4. 작업 도메인에 맞는 `doc/domains/<name>/rules.md` 1개 이상
-5. **최신 상태 직접 검증** (§3) — "봇·자기 발언 신뢰성 0" 원칙(`doc/skills/bot-ops.md §2.2`)
+새 세션은 **어떤 작업·답변에도 착수하기 전에 `doc/` 하위 가이드 전부를 무조건 읽는다.**
+일부만 읽거나 "도메인에 맞는 것만" 고르는 것을 금지한다. 아래 10개 파일을 **전부** 흡수한다:
 
-> 건너뛰지 말 것: 트레이딩/시크릿/자동화 작업은 해당 `rules.md`를 흡수하기 전에 손대지 않는다.
+1. `CLAUDE.md` (루트) — 진입점, 핵심 룰 5종, 우선순위
+2. `doc/README.md` — 운영 매뉴얼 구조
+3. `doc/skill-define.md` — doc 변경 메타 표준
+4. `doc/domains/security/rules.md` — **최상위 우선** (시크릿)
+5. `doc/domains/trading/rules.md` — 레버리지·Decimal·paper 게이트·퀀트 표준
+6. `doc/domains/automation/rules.md` — 웹 자동화·HITL
+7. `doc/skills/bot-ops.md` — 봇 운영 + "발언 신뢰성 0" SSOT
+8. `doc/skills/system-health.md` — 시스템 안정성·모니터링
+9. `doc/skills/infra-debug.md` — 인프라 디버깅 런북
+10. `doc/skills/progressive-gate.md` — 점진 진입 게이트
+11. `doc/skills/audit-log.md` — 감사 로그 표준
+
+> **건너뛰지 말 것.** 위 전부를 흡수하기 전에는 트레이딩·시크릿·자동화·인프라 어떤 작업도 손대지 않는다.
+>
+> **surface별 적용:**
+> - **Claude Code (웹/CLI/IDE)** — `CLAUDE.md`가 위 doc 파일 전부를 `@import`로 자동·무조건 흡수한다. 별도 조치 불필요. (단, doc/에 **새 파일 추가 시 `CLAUDE.md`의 `@import` 목록과 위 §0 목록을 함께 갱신**해야 자동 흡수가 유지된다.)
+> - **Claude.ai 프로젝트 등 `CLAUDE.md`를 자동으로 읽지 않는 surface** — 프로젝트 지시사항에서 "이 파일을 먼저 읽고 위 10개를 전부 읽으라"고 강제한다.
+
+그 다음: **최신 상태 직접 검증** (§3) — "봇·자기 발언 신뢰성 0" 원칙(`doc/skills/bot-ops.md §2.2`).
 
 ---
 
