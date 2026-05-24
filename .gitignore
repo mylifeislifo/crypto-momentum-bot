@@ -15,3 +15,5 @@ logs/
 paper_state.json
 recorded_ticks/
 *.ndjson
+data/turtle_bot_cache/
+results/turtle_bot/
