@@ -1,51 +1,46 @@
-"""YAML config loader with .env secret injection."""
-from __future__ import annotations
-
-import os
 from pathlib import Path
-from typing import Any
 
 import yaml
-from dotenv import load_dotenv
 
-from .schema import AppConfig
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    out = dict(base)
-    for k, v in override.items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
-def load_yaml(path: str | Path) -> dict[str, Any]:
-    p = Path(path)
-    if not p.exists():
-        return {}
-    with p.open(encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Config root must be mapping: {path}")
-    return data
+from .schema import AppConfig, Secrets
 
 
 def load_config(
-    primary: str | Path,
-    *overrides: str | Path,
-    env_path: str | Path | None = ".env",
-) -> AppConfig:
-    """Load default.yaml + optional overrides + .env secrets into AppConfig."""
-    if env_path and Path(env_path).exists():
-        load_dotenv(env_path)
+    config_path: str = "config/default.yaml",
+    override_path: str | None = None,
+    env_file: str = ".env",
+) -> tuple[AppConfig, Secrets]:
+    """Load config from YAML (with optional override) and secrets from .env.
 
-    merged: dict[str, Any] = {}
-    for p in (primary, *overrides):
-        merged = _deep_merge(merged, load_yaml(p))
+    Returns (AppConfig, Secrets) so callers can access secrets without
+    embedding them into AppConfig (which gets logged/serialized).
+    """
+    base = _load_yaml(config_path)
 
-    merged.setdefault("upbit_access_key", os.getenv("UPBIT_ACCESS_KEY"))
-    merged.setdefault("upbit_secret_key", os.getenv("UPBIT_SECRET_KEY"))
+    if override_path:
+        override = _load_yaml(override_path)
+        base = _deep_merge(base, override)
 
-    return AppConfig.model_validate(merged)
+    config = AppConfig.model_validate(base)
+    secrets = Secrets(_env_file=env_file)  # type: ignore[call-arg]
+
+    return config, secrets
+
+
+def _load_yaml(path: str) -> dict:
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+    with p.open() as f:
+        return yaml.safe_load(f) or {}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result

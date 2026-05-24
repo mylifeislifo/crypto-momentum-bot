@@ -1,124 +1,175 @@
-"""Core dataclasses shared across modes (backtest/paper/live)."""
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from .enums import OrderSide, OrderStatus, OrderType, Regime, Side, TimeInForce
+from .enums import (
+    Interval,
+    NotifyEventType,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    SentimentLabel,
+    Side,
+)
+
+
+@dataclass(frozen=True)
+class OBLevel:
+    price: Decimal
+    qty: Decimal
+
+
+@dataclass(frozen=True)
+class OBSnapshot:
+    ts: datetime
+    bids: tuple[OBLevel, ...]   # sorted desc (best bid first)
+    asks: tuple[OBLevel, ...]   # sorted asc (best ask first)
+    imbalance_raw: float        # (bid_vol - ask_vol) / (bid_vol + ask_vol), pre-filter
+    imbalance: float            # same, post spoof-filter
+    mid_price: Decimal
+    spread: Decimal
+
+
+@dataclass(frozen=True)
+class Trade:
+    ts: datetime
+    price: Decimal
+    qty: Decimal
+    is_buyer_maker: bool        # True = sell aggressor, False = buy aggressor
+
+
+@dataclass(frozen=True)
+class OIFunding:
+    ts: datetime
+    open_interest: Decimal      # in BTC (base asset)
+    oi_delta_pct: float         # (curr - prev) / prev; None-safe via 0.0 on first tick
+    funding_rate: float         # e.g. 0.0001 = 0.01%
+    next_funding_ts: datetime
+
+
+@dataclass(frozen=True)
+class SentimentReading:
+    ts: datetime
+    fear_greed_index: int       # 0-100
+    sentiment_label: SentimentLabel
+    long_ratio: float           # e.g. 0.55 = 55% longs (from Coinglass)
+    short_ratio: float
 
 
 @dataclass(frozen=True)
 class Bar:
-    symbol: str
-    ts: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-
-
-@dataclass(frozen=True)
-class FeeSchedule:
-    maker_bps: float
-    taker_bps: float
-
-    def per_side(self, taker: bool = True) -> float:
-        return (self.taker_bps if taker else self.maker_bps) / 10_000.0
-
-
-@dataclass(frozen=True)
-class SymbolMeta:
-    symbol: str
-    base: str
-    quote: str
-    tick_size: Decimal
-    lot_size: Decimal
-    min_notional: Decimal
-    is_derivative: bool = False
+    ts: datetime                # bar open time (UTC, floored to interval)
+    interval: Interval
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal             # total traded qty
+    buy_volume: Decimal         # aggressor buy qty
+    sell_volume: Decimal        # aggressor sell qty
+    cvd_delta: float            # buy_volume - sell_volume for this bar
+    cvd_cumulative: float       # running CVD since bot start
+    vwap: Decimal
+    trade_count: int
 
 
 @dataclass(frozen=True)
 class Signal:
-    symbol: str
     ts: datetime
     side: Side
-    strength: float  # ranking key (e.g. ADX), used to break ties
-    reason: str
-    enter: bool  # True=open, False=close
-    meta: dict = field(default_factory=dict)
+    entry_price_est: Decimal    # mid-price at signal time
+    stop_price: Decimal         # initial SL price
+    confidence: float           # 0.0-1.0 (fraction of gates passed with margin)
+    # gate results
+    macro_gate: bool            # sentiment + funding aligned
+    micro_gate: bool            # OI delta + large OB fill
+    cvd_gate: bool              # CVD trend confirmation
+    # raw inputs for audit log
+    fear_greed: int
+    funding_rate: float
+    oi_delta_pct: float
+    imbalance: float
+    cvd_delta_sum: float        # sum of last N bars CVD delta
 
 
-@dataclass
+@dataclass(frozen=True)
 class Order:
+    id: str
+    client_order_id: str
     symbol: str
     side: OrderSide
-    type: OrderType
+    position_side: PositionSide
+    order_type: OrderType
     qty: Decimal
-    price: Optional[Decimal] = None  # None for market
-    tif: TimeInForce = TimeInForce.GTC
-    client_id: Optional[str] = None
-    quote_currency: str = "KRW"
-    is_derivative: bool = False
-    leverage: float = 1.0
+    price: Optional[Decimal]
+    stop_price: Optional[Decimal]
+    status: OrderStatus
+    ts: datetime
     reduce_only: bool = False
 
 
-@dataclass
+@dataclass(frozen=True)
 class Fill:
     order_id: str
     symbol: str
-    side: OrderSide
+    side: Side
+    position_side: PositionSide
     qty: Decimal
-    price: Decimal
-    fee: Decimal
-    ts: datetime
-
-
-@dataclass
-class OrderState:
-    order_id: str
-    status: OrderStatus
-    filled_qty: Decimal
     avg_price: Decimal
-    remaining_qty: Decimal
+    commission: Decimal
+    commission_asset: str
+    ts: datetime
+    is_entry: bool              # False = exit/SL hit
 
 
 @dataclass
 class Position:
+    position_id: str            # UUID assigned by order_manager
     symbol: str
     side: Side
+    position_side: PositionSide
     qty: Decimal
     entry_price: Decimal
-    entry_ts: datetime
-    initial_stop: Decimal
-    trail_stop: Decimal
-    high_watermark: Decimal  # max high since entry (for chandelier trail)
-    is_derivative: bool = False
-    leverage: float = 1.0
-
-    def notional(self, mark: Decimal) -> Decimal:
-        return self.qty * mark
-
-    def unrealized_pnl(self, mark: Decimal) -> Decimal:
-        sign = Decimal(1) if self.side is Side.LONG else Decimal(-1)
-        return (mark - self.entry_price) * self.qty * sign
+    current_price: Decimal
+    unrealized_pnl: Decimal
+    leverage: int
+    sl_order_id: str
+    sl_price: Decimal
+    opened_at: datetime
+    updated_at: datetime
 
 
-@dataclass
+@dataclass(frozen=True)
 class EquitySnapshot:
     ts: datetime
-    cash: Decimal
-    positions_value: Decimal
-    equity: Decimal
-    realized_pnl: Decimal
+    balance: Decimal            # realized USDT balance
     unrealized_pnl: Decimal
+    total_equity: Decimal
+    daily_pnl_pct: float        # (total_equity - start_equity) / start_equity
 
 
-@dataclass
-class RegimeState:
-    regime: Regime
+@dataclass(frozen=True)
+class CircuitBreakerState:
+    triggered_at: datetime
+    reset_at: datetime          # next 09:00 KST as UTC
+    daily_pnl_pct: float
+    message: str
+
+
+@dataclass(frozen=True)
+class TrailUpdate:
+    position_id: str
+    old_sl_order_id: str
+    new_stop_price: Decimal
+    old_stop_price: Decimal
     ts: datetime
-    meta: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class NotifyEvent:
+    event_type: NotifyEventType
+    ts: datetime
+    message: str
+    data: Optional[dict] = None  # extra fields for structured logging

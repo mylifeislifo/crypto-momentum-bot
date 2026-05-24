@@ -1,3 +1,6 @@
 mode: paper
-risk:
-  risk_per_trade: 0.012
+dry_run: true
+
+logging:
+  level: DEBUG
+  json_format: false

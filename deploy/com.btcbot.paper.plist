@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Label must match filename (without .plist) -->
+  <key>Label</key>
+  <string>com.btcbot.paper</string>
+
+  <!-- Absolute path to btcbot CLI installed by `pip install -e .` -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOURUSER/.local/bin/btcbot</string>
+    <string>paper</string>
+    <string>--config</string>
+    <string>/Users/YOURUSER/for_claude/config/default.yaml</string>
+  </array>
+
+  <!-- Working directory — config/ and paper_state.json resolve from here -->
+  <key>WorkingDirectory</key>
+  <string>/Users/YOURUSER/for_claude</string>
+
+  <!-- Load .env automatically via EnvironmentVariables -->
+  <!-- Alternatively, put secrets in .env and let pydantic-settings pick them up -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <!-- stdout / stderr go to rotating log files (see deploy/logrotate.conf) -->
+  <key>StandardOutPath</key>
+  <string>/Users/YOURUSER/for_claude/logs/btcbot.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOURUSER/for_claude/logs/btcbot_err.log</string>
+
+  <!-- Restart automatically if the process exits for any reason -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Wait 10s before restarting to avoid tight crash loops -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Run at user login, not system boot (avoids keychain/network timing issues) -->
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>

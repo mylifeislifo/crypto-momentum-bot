@@ -1,4 +1,7 @@
 mode: live
-dry_run: true   # set to false ONLY after paper-trading gates pass
-risk:
-  risk_per_trade: 0.010
+dry_run: false
+
+logging:
+  level: INFO
+  json_format: true
+  log_dir: /var/log/btcbot
