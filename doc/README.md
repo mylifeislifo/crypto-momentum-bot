@@ -13,7 +13,8 @@ doc/
 │   ├── system-health.md      # 맥미니 안정성 + 모니터링 통합
 │   ├── infra-debug.md        # Tunnel/OAuth/config drift 복구 런북
 │   ├── progressive-gate.md   # 비가역 행위 전 점진 진입(Sandbox→Small→Full) — 게이트 SSOT
-│   └── audit-log.md          # 구조화 로그(JSON Lines) + 직접 파싱 표준 — 로그 인프라 SSOT
+│   ├── audit-log.md          # 구조화 로그(JSON Lines) + 직접 파싱 표준 — 로그 인프라 SSOT
+│   └── signal-validation.md  # 정량 발견(상관·lead-lag) 자기기만 방지 검증 방법론
 │
 └── domains/                  # 도메인별 절대 규칙 (rules.md)
     ├── trading/rules.md      # 레버리지·수치·paper 게이트·상태 포맷·파라미터·퀀트 실행 표준

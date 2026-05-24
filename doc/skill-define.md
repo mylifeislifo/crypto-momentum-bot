@@ -65,7 +65,7 @@
 
 | 형태 | 위치 | 예시 |
 |------|------|------|
-| **동사형** (행위) | `skills/<verb>.md` | bot-ops(운영하다), infra-debug(디버깅하다), system-health(점검하다), progressive-gate(게이트 통과), audit-log(로그 남기다) |
+| **동사형** (행위) | `skills/<verb>.md` | bot-ops(운영하다), infra-debug(디버깅하다), system-health(점검하다), progressive-gate(게이트 통과), audit-log(로그 남기다), signal-validation(신호 검증하다) |
 | **명사형** (영역) | `domains/<noun>/rules.md` | trading, automation, security |
 
 경계 케이스 판단:
@@ -143,3 +143,4 @@ skill-define.md                 ← 메타 (작성 방법론)
 - **[2026.05.23]** 초안 도입. 4 skills + 4 domains 구조를 전제했으나 실제 푸시 시 3+3 구조로 줄어든 사례 → README 트리와 실제 파일 상태를 푸시 직후 `get_file_contents`로 직접 검증하는 절차 §7에 명문화.
 - **[2026.05.23 v2]** 메타 리뷰 반영: (a) §1에 파일 삭제·병합·이름변경 발동조건 추가 (b) §1.1 경량/중량 구분 신설로 16점 전면적용 비효율 해소 (c) §4.1 양식 표준 명시(skills=고정/domains=자유) (d) §7 자기검증에 트리 diff·인용 grep 명문화 + bot-ops §2.2를 "신뢰성 0" SSOT로 명시.
 - **[2026.05.23 v3]** 신규 스킬 2개 신설 — `skills/progressive-gate.md`(점진 진입 게이트 SSOT) + `skills/audit-log.md`(구조화 로그 SSOT). 분산되어 있던 trading §1.3·automation §4·bot-ops §2.1 #6·system-health §2.2를 progressive-gate로, trading §5·system-health §2.2·§2.3을 audit-log로 SSOT 통합. 각 도메인의 구체 수치·스키마는 유지, 일반 원칙만 흡수. CLAUDE.md @import 2개 추가, README 트리·§4 분류표 갱신.
+- **[2026.05.24]** 신규 스킬 1개 신설 — `skills/signal-validation.md`(정량 발견 검증 방법론). `bot-ops §2.2` "신뢰성 0"의 정량 연구 확장. 5점 체크 전항 통과(범용성: 특정 신호 ETH→BTC는 `trading/rules.md §8` 예외로 격리, 본문은 임의 신호용 일반 방법론만 / 도메인 누수: 구체 수치는 trading 우선 명시). Spec 7 승인 완료. 계기: "ETH 펀딩비 고점 → BTC 12h 후 하락(OOS −0.335)" 발견 검토 중 겹침 표본·중첩창(60⊂180⊂365)·IC 과대·r↔r² 혼동·인과 미확정 결함 식별 → 방법론으로 일반화. CLAUDE.md @import·README 트리·§4 분류표 갱신.
