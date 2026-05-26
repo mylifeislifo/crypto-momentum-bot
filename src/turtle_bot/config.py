@@ -56,7 +56,7 @@ class BacktestConfig(BaseModel):
     capital_allocation: Decimal = Field(default=Decimal("0.5"))  # 50/50 split
     initial_capital: Decimal = Field(default=Decimal("10000"))
     leverage: Decimal = Field(default=Decimal("1.0"))  # M1 = 1x
-    taker_fee: Decimal = Field(default=Decimal("0.0004"))  # 0.04% taker
+    taker_fee: Decimal = Field(default=Decimal("0.0006"))  # 0.06% taker (Bitget USDT-M VIP0 기준)
     slippage: Decimal = Field(default=Decimal("0.0005"))  # 0.05% conservative
     interval: str = "1d"
     data_cache_dir: Path = Path("data/turtle_bot_cache")

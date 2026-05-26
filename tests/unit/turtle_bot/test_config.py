@@ -43,7 +43,7 @@ class TestVideoParameters:
 
     def test_costs_match_conservative_assumption(self):
         cfg = BacktestConfig()
-        assert cfg.taker_fee == Decimal("0.0004")  # 0.04% taker
+        assert cfg.taker_fee == Decimal("0.0006")  # 0.06% taker (Bitget USDT-M VIP0 실제값)
         assert cfg.slippage == Decimal("0.0005")  # 0.05% slippage
         assert cfg.interval == "1d"
 
