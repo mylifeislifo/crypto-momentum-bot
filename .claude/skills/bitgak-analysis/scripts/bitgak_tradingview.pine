@@ -33,6 +33,12 @@ descCol   = input.color(color.new(#e03131, 0), "하락 색", group = grpV)
 fillOn    = input.bool(true, "채널 음영", group = grpV)
 showPanel = input.bool(true, "판정 패널", group = grpV)
 
+grpA      = "미세조정 (현재 시점 중심)"
+widthMult = input.float(1.0, "채널 폭 배수 (↑넓게)", minval = 0.3, maxval = 5.0, step = 0.1, group = grpA)
+upOff     = input.float(0.0, "상단 오프셋 %", minval = -50.0, maxval = 50.0, step = 0.5, group = grpA)
+loOff     = input.float(0.0, "하단 오프셋 %", minval = -50.0, maxval = 50.0, step = 0.5, group = grpA)
+slopeMult = input.float(1.0, "기울기 배수", minval = 0.5, maxval = 1.5, step = 0.01, group = grpA)
+
 // ───────────── 상위TF 데이터 수집 (비리페인트) ─────────────
 [hH, hL, hC, hT] = request.security(syminfo.tickerid, htf, [high, low, close, time],
      lookahead = barmerge.lookahead_off)
@@ -264,26 +270,32 @@ if barstate.islast
             [ok, tc, sMs, uT, uLg, lT, lLg] = findChannel(fH, fL, fT, wLH, wLL, wPV, pivotOrder, tolPct, isDesc)
             if ok
                 col = isDesc ? descCol : ascCol
-                x1  = math.min(uT, lT)
-                // 선 작도 (로그 스케일에서 직선 = 빗각)
-                upln = line.new(x1, f_price(uLg, uT, sMs, x1), rightX, f_price(uLg, uT, sMs, rightX),
+                // 현재 시점(now) 중심으로 재앵커 후 미세조정 적용
+                uRef0 = uLg + sMs * (nowT - uT)        // 보정 전 상단 로그값 @now
+                lRef0 = lLg + sMs * (nowT - lT)        // 보정 전 하단 로그값 @now
+                cRef  = (uRef0 + lRef0) / 2            // 채널 중심
+                hwRef = (uRef0 - lRef0) / 2            // 반폭
+                uRef  = cRef + hwRef * widthMult + math.log(1 + upOff / 100)
+                lRef  = cRef - hwRef * widthMult + math.log(1 + loOff / 100)
+                cRefA = (uRef + lRef) / 2
+                sAdj  = sMs * slopeMult
+                x1    = math.min(uT, lT)
+                // 선 작도 (로그 스케일에서 직선 = 빗각), now 기준 기울기 sAdj
+                upln = line.new(x1, f_price(uRef, nowT, sAdj, x1), rightX, f_price(uRef, nowT, sAdj, rightX),
                      xloc = xloc.bar_time, color = col, width = 2)
-                loln = line.new(x1, f_price(lLg, lT, sMs, x1), rightX, f_price(lLg, lT, sMs, rightX),
+                loln = line.new(x1, f_price(lRef, nowT, sAdj, x1), rightX, f_price(lRef, nowT, sAdj, rightX),
                      xloc = xloc.bar_time, color = col, width = 2, style = line.style_dashed)
-                // 중앙선 (로그 공간 평균)
-                pm1 = math.exp(((uLg + sMs * (x1 - uT)) + (lLg + sMs * (x1 - lT))) / 2)
-                pm2 = math.exp(((uLg + sMs * (rightX - uT)) + (lLg + sMs * (rightX - lT))) / 2)
-                mdln = line.new(x1, pm1, rightX, pm2, xloc = xloc.bar_time,
-                     color = color.new(col, 35), width = 1, style = line.style_dotted)
+                mdln = line.new(x1, f_price(cRefA, nowT, sAdj, x1), rightX, f_price(cRefA, nowT, sAdj, rightX),
+                     xloc = xloc.bar_time, color = color.new(col, 35), width = 1, style = line.style_dotted)
                 array.push(gLines, upln)
                 array.push(gLines, loln)
                 array.push(gLines, mdln)
                 if fillOn
                     array.push(gFills, linefill.new(upln, loln, color.new(col, 92)))
 
-                // 현재가 채널 내 위치
-                uN  = uLg + sMs * (nowT - uT)
-                lN  = lLg + sMs * (nowT - lT)
+                // 현재가 채널 내 위치 (보정값 기준)
+                uN  = uRef
+                lN  = lRef
                 wN  = uN - lN
                 pos = wN != 0 ? (logNow - lN) / wN : na
                 verdict = "—"
