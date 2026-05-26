@@ -34,20 +34,20 @@
 - 거래소: **비트겟 USDT-M 무기한 선물** (실거래 예정 거래소와 일치). 공개
   klines라 API 키 불필요.
 - 엔드포인트: Bitget v2 `GET /api/v2/mix/market/history-candles`
-  (`productType=usdt-futures`, `granularity=1D`), `endTime` 기준 역방향
-  페이지네이션.
+  (`productType=usdt-futures`, `granularity=1Dutc` — UTC 정렬 일봉), `endTime`
+  기준 역방향 페이지네이션 (서버는 일봉 요청당 ~90행 캡).
 - 코드: `data/fetcher.py`(aiohttp + tenacity 재시도) → Polars DF(OHLCV
   `Decimal` 보존·ts UTC) → `data/cache.py` parquet 캐시(`data/turtle_bot_cache/`).
-- ⚠️ **미검증**: 작성 시점 `api.bitget.com`이 네트워크 차단 상태라 라이브
-  호출은 한 번도 안 됨. 파싱·페이지네이션은 오프라인(`aioresponses`)으로
-  테스트 통과. **정책 허용 후 1회 실호출로 candle 배열 필드 순서·granularity
-  표기 검증 필수** (`bot-ops §2.2` 신뢰성 0).
+- ⚠️ **부분 검증**: 필드 순서·`1Dutc` granularity는 라이브로 동작한 레퍼런스
+  fetch와 대조해 교정함. 파싱·페이지네이션은 오프라인(`aioresponses`) 테스트
+  통과. 단 **이 fetcher 자체의 라이브 실호출은 아직 안 됨** — 정책 허용
+  (`api.bitget.com`) 후 1회 실호출 확인 필요 (`bot-ops §2.2` 신뢰성 0).
 
 ## 마일스톤
 
 | | 범위 | 상태 |
 |---|------|------|
-| **M1** | 단일 백테스트 (점 추정만, 양수 확인) | 🔧 스켈레톤 |
+| **M1** | 단일 백테스트 (점 추정만, 양수 확인) | 🔧 엔진 구현·단위검증 완료 / 실데이터 실행은 Bitget 접속 환경에서 대기 |
 | M2 | walkforward (T180/V90/S30) + 부트스트랩 CI | 대기 |
 | M3 | 시간 분해 (연도별 alpha 감쇄 점검) | 대기 |
 | M4 | paper 게이트 (`.env` 시크릿) | 대기 |
@@ -67,16 +67,24 @@
    - 종가가 200SMA **아래** → **숏만** 진입. 숏 청산 = 11일 채널 **상단 돌파**.
    - 추세 반대 방향 신규 진입은 차단.
 
+구현(`engine.py`): 지표는 Polars Float64로 벡터 계산(§7.1), 체결가·손익·수량은
+캐시의 `Decimal`을 그대로 사용. 리스크 **2%**(영상값), 손절 터치는 stop 가격
+체결, 매 트레이드 **거래비용 차감**(taker 0.04%×2 + 슬리피지 0.05%). 봉당 1포지션,
+심볼별 독립 자본(50/50).
+
 ## 검증 명령 (예시)
 
 ```bash
 # 설정 로드 확인
 python3 -c "from turtle_bot.config import PARAMS_M1, CONFIG_M1; print(PARAMS_M1, CONFIG_M1)"
 
-# 단위 테스트
+# 단위 테스트 (엔진·fetcher·런너)
 pytest tests/unit/turtle_bot/ -v
 
-# (M1 결과 산출 후) JSON Lines 거래 로그 직접 파싱 — bot-ops §2.2 신뢰성 0
-jq -s 'map(select(.event=="order_filled")) | map(.payload.pnl|tonumber) | add' \
-  results/turtle_bot/m1/trades.jsonl
+# 데이터 수집(Bitget 접속 필요) → 백테스트 실행
+python3 -m turtle_bot.data.fetcher --start 2019-09-01
+python3 -m turtle_bot.backtest
+
+# 결과 직접 파싱으로 summary 교차검증 — bot-ops §2.2 신뢰성 0
+jq -s 'map(.payload.pnl|tonumber) | add' results/turtle_bot/m1/trades.jsonl
 ```

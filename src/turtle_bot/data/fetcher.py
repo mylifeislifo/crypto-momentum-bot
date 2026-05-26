@@ -48,8 +48,10 @@ _FIELD_LOW = 3
 _FIELD_CLOSE = 4
 _FIELD_VOLUME = 5  # base volume
 
-# interval -> Bitget granularity token
-_GRANULARITY: dict[str, str] = {"1d": "1D"}
+# interval -> Bitget granularity token. Daily uses the UTC-aligned variant
+# ("1Dutc") so candles open at 00:00 UTC — confirmed against a live-working
+# reference fetch. Plain "1D" aligns to a non-UTC session boundary.
+_GRANULARITY: dict[str, str] = {"1d": "1Dutc"}
 
 PAGE_LIMIT = 200  # history-candles max rows per request (Bitget v2)
 _RATE_LIMIT_SLEEP = 0.15  # seconds between paged requests (well under rate cap)
