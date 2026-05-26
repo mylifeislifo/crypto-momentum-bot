@@ -32,6 +32,9 @@ ascCol    = input.color(color.new(#1971c2, 0), "상승 색", group = grpV)
 descCol   = input.color(color.new(#e03131, 0), "하락 색", group = grpV)
 fillOn    = input.bool(true, "채널 음영", group = grpV)
 showPanel = input.bool(true, "판정 패널", group = grpV)
+showExt   = input.bool(false, "확장 평행선 (위·아래)", group = grpV)
+extCount  = input.int(2, "확장선 개수 (위·아래 각)", minval = 1, maxval = 6, group = grpV)
+extStep   = input.float(1.0, "확장 간격 (채널폭 배수)", minval = 0.1, maxval = 2.0, step = 0.1, group = grpV)
 
 grpA      = "미세조정 (현재 시점 중심)"
 widthMult = input.float(1.0, "채널 폭 배수 (↑넓게)", minval = 0.3, maxval = 5.0, step = 0.1, group = grpA)
@@ -292,6 +295,19 @@ if barstate.islast
                 array.push(gLines, mdln)
                 if fillOn
                     array.push(gFills, linefill.new(upln, loln, color.new(col, 92)))
+
+                // 확장 평행선 (채널과 같은 기울기로 위·아래 등간격)
+                if showExt
+                    bandW = uRef - lRef
+                    for kk = 1 to extCount
+                        uOff = uRef + kk * extStep * bandW
+                        lOff = lRef - kk * extStep * bandW
+                        eUp = line.new(x1, f_price(uOff, nowT, sAdj, x1), rightX, f_price(uOff, nowT, sAdj, rightX),
+                             xloc = xloc.bar_time, color = color.new(col, 55), width = 1)
+                        eLo = line.new(x1, f_price(lOff, nowT, sAdj, x1), rightX, f_price(lOff, nowT, sAdj, rightX),
+                             xloc = xloc.bar_time, color = color.new(col, 55), width = 1)
+                        array.push(gLines, eUp)
+                        array.push(gLines, eLo)
 
                 // 현재가 채널 내 위치 (보정값 기준)
                 uN  = uRef
