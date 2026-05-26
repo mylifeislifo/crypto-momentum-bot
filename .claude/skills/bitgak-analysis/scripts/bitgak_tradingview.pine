@@ -1,0 +1,302 @@
+//@version=6
+// ════════════════════════════════════════════════════════════════════
+//  인범식 빗각 채널 (Bitgak Auto) — TradingView 자동 작도 인디케이터
+//  bitgak_analyze.py 의 탐지 로직을 Pine 으로 포팅한 자체탐지 버전.
+//  차트에 한 번 추가하면 어떤 종목·차트를 열어도 빗각 채널을 자동 작도한다.
+//
+//  원칙(인범식):
+//   - 꼬리(Wick) 끝점 연결: High/Low 사용 (Close 아님)
+//   - 로그 차트 필수: ln(price) 공간에서 직선 → 화면은 반드시 로그 스케일로
+//   - 3점 검증: 두 극값으로 마스터 선, 사이 반대 극값에 평행선 부착
+//
+//  ※ 기술적 분석이며 투자 조언이 아님. 펀더멘털과 교차 확인 필수.
+//  ※ 주문/체결 로직 없음 — 시각화 전용.
+// ════════════════════════════════════════════════════════════════════
+indicator("인범식 빗각 채널 (Bitgak Auto)", "Bitgak", overlay = true,
+     max_lines_count = 100, max_labels_count = 20)
+
+// ───────────── 입력 ─────────────
+grpD       = "탐지"
+htf        = input.timeframe("W", "탐지 타임프레임", group = grpD)
+lookback   = input.int(260, "조회 봉수(상위TF)", minval = 40, maxval = 500, group = grpD)
+pivotOrder = input.int(3,   "극값 order (±봉)", minval = 1, maxval = 10, group = grpD)
+tolPct     = input.float(7.0, "터치 허용오차 (채널폭 %)", minval = 1.0, maxval = 25.0, group = grpD) / 100.0
+useFilter  = input.bool(true,  "MAD 아웃라이어 필터", group = grpD)
+madMult    = input.float(2.5,  "MAD 배수", minval = 1.0, maxval = 5.0, group = grpD)
+
+grpV      = "표시"
+showAsc   = input.bool(true,  "상승 채널", group = grpV)
+showDesc  = input.bool(true,  "하락 채널", group = grpV)
+futureWks = input.int(12, "우측 미래 연장(상위TF 봉수)", minval = 0, maxval = 200, group = grpV)
+ascCol    = input.color(color.new(#1971c2, 0), "상승 색", group = grpV)
+descCol   = input.color(color.new(#e03131, 0), "하락 색", group = grpV)
+fillOn    = input.bool(true, "채널 음영", group = grpV)
+showPanel = input.bool(true, "판정 패널", group = grpV)
+
+// ───────────── 상위TF 데이터 수집 (비리페인트) ─────────────
+[hH, hL, hC, hT] = request.security(syminfo.tickerid, htf, [high, low, close, time],
+     lookahead = barmerge.lookahead_off)
+
+var array<float> aH = array.new<float>()
+var array<float> aL = array.new<float>()
+var array<float> aC = array.new<float>()
+var array<int>   aT = array.new<int>()
+
+newBar = not na(hT[1]) and hT != hT[1]
+if newBar and not na(hH[1])
+    array.push(aH, hH[1])
+    array.push(aL, hL[1])
+    array.push(aC, hC[1])
+    array.push(aT, int(hT[1]))
+    if array.size(aH) > lookback
+        array.shift(aH)
+        array.shift(aL)
+        array.shift(aC)
+        array.shift(aT)
+
+// ───────────── 채널 탐지 ─────────────
+// 반환: [found, touches, slopeMs, upT, upLog, loT, loLog]
+//   slopeMs : log-price / ms 기울기 (상·하단 공유)
+//   상단선은 (upT, upLog), 하단선은 (loT, loLog) 통과
+findChannel(array<float> H, array<float> L, array<int> T, int order, float tol, bool desc) =>
+    n        = array.size(H)
+    found    = false
+    touches  = 0
+    slopeMs  = 0.0
+    upT      = 0
+    upLog    = 0.0
+    loT      = 0
+    loLog    = 0.0
+    if n >= (2 * order + 3)
+        // 로그 변환 (꼬리 기준)
+        lH = array.new<float>(n)
+        lL = array.new<float>(n)
+        for i = 0 to n - 1
+            array.set(lH, i, math.log(array.get(H, i)))
+            array.set(lL, i, math.log(array.get(L, i)))
+        // 극값 피벗 (argrelextrema order=N 동등: 양쪽 N봉 모두 비교)
+        pv = array.new<int>()
+        for i = order to n - 1 - order
+            base = desc ? array.get(H, i) : array.get(L, i)
+            ok   = true
+            for k = 1 to order
+                cl   = desc ? array.get(H, i - k) : array.get(L, i - k)
+                cr   = desc ? array.get(H, i + k) : array.get(L, i + k)
+                cond = desc ? (base >= cl and base >= cr) : (base <= cl and base <= cr)
+                if not cond
+                    ok := false
+                    break
+            if ok
+                array.push(pv, i)
+        np        = array.size(pv)
+        bestScore = -1.0
+        bIa       = -1
+        bIb       = -1
+        bIc       = -1
+        // 쌍별 채널 스코어링 (touches × span 최대)
+        for ii = 0 to np - 1
+            for jj = ii + 1 to np - 1
+                ia = array.get(pv, ii)
+                ib = array.get(pv, jj)
+                if ib - ia < 3
+                    continue
+                m = desc ? (array.get(lH, ib) - array.get(lH, ia)) / (ib - ia) : (array.get(lL, ib) - array.get(lL, ia)) / (ib - ia)
+                if desc and m >= 0
+                    continue
+                if (not desc) and m <= 0
+                    continue
+                // 사이 구간 반대편 극값 ic
+                ic = ia
+                if desc
+                    mv = array.get(L, ia)
+                    for s = ia to ib
+                        v = array.get(L, s)
+                        if v < mv
+                            mv := v
+                            ic := s
+                else
+                    mv = array.get(H, ia)
+                    for s = ia to ib
+                        v = array.get(H, s)
+                        if v > mv
+                            mv := v
+                            ic := s
+                // 인덱스 공간 절편 (x=0 기준)
+                bu = 0.0
+                bl = 0.0
+                if desc
+                    bu := array.get(lH, ia) - m * ia
+                    bl := array.get(lL, ic) - m * ic
+                else
+                    bl := array.get(lL, ia) - m * ia
+                    bu := array.get(lH, ic) - m * ic
+                w = bu - bl
+                if w <= 0
+                    continue
+                tl = w * tol
+                t  = 0
+                for x = ib to n - 1
+                    if math.abs(array.get(lH, x) - (m * x + bu)) < tl
+                        t += 1
+                    if math.abs(array.get(lL, x) - (m * x + bl)) < tl
+                        t += 1
+                score = t * (ib - ia)
+                if score > bestScore
+                    bestScore := score
+                    bIa       := ia
+                    bIb       := ib
+                    bIc       := ic
+        if bIa >= 0
+            found := true
+            la = desc ? array.get(lH, bIa) : array.get(lL, bIa)
+            lb = desc ? array.get(lH, bIb) : array.get(lL, bIb)
+            dt = array.get(T, bIb) - array.get(T, bIa)
+            slopeMs := dt != 0 ? (lb - la) / dt : 0.0
+            if desc
+                upT   := array.get(T, bIa)
+                upLog := la
+                loT   := array.get(T, bIc)
+                loLog := array.get(lL, bIc)
+            else
+                loT   := array.get(T, bIa)
+                loLog := la
+                upT   := array.get(T, bIc)
+                upLog := array.get(lH, bIc)
+            // 보고용 터치 재집계 (인덱스 공간)
+            mIdx = desc ? (array.get(lH, bIb) - array.get(lH, bIa)) / (bIb - bIa) : (array.get(lL, bIb) - array.get(lL, bIa)) / (bIb - bIa)
+            buI  = 0.0
+            blI  = 0.0
+            if desc
+                buI := array.get(lH, bIa) - mIdx * bIa
+                blI := array.get(lL, bIc) - mIdx * bIc
+            else
+                blI := array.get(lL, bIa) - mIdx * bIa
+                buI := array.get(lH, bIc) - mIdx * bIc
+            tlI = (buI - blI) * tol
+            tc  = 0
+            for x = bIb to n - 1
+                if math.abs(array.get(lH, x) - (mIdx * x + buI)) < tlI
+                    tc += 1
+                if math.abs(array.get(lL, x) - (mIdx * x + blI)) < tlI
+                    tc += 1
+            touches := tc
+    [found, touches, slopeMs, upT, upLog, loT, loLog]
+
+// ───────────── 작도 + 판정 (마지막 봉에서 1회) ─────────────
+var array<line>     gLines = array.new<line>()
+var array<linefill> gFills = array.new<linefill>()
+var table panel = table.new(position.top_right, 8, 4, border_width = 1,
+     frame_color = color.gray, frame_width = 1)
+
+f_price(logRef, refT, slopeMs, x) => math.exp(logRef + slopeMs * (x - refT))
+
+if barstate.islast
+    // 이전 작도 제거
+    for ln in gLines
+        line.delete(ln)
+    array.clear(gLines)
+    for lf in gFills
+        linefill.delete(lf)
+    array.clear(gFills)
+    table.clear(panel, 0, 0, 7, 3)
+
+    // MAD 필터 → 필터 배열 구성
+    n0 = array.size(aH)
+    fH = array.new<float>()
+    fL = array.new<float>()
+    fT = array.new<int>()
+    if n0 > 0
+        lc = array.new<float>()
+        for i = 0 to n0 - 1
+            array.push(lc, math.log(array.get(aC, i)))
+        med = array.median(lc)
+        ad  = array.new<float>()
+        for i = 0 to n0 - 1
+            array.push(ad, math.abs(array.get(lc, i) - med))
+        mad     = array.median(ad)
+        thresh  = math.exp(med + madMult * mad)
+        protect = int(math.floor(n0 * 0.7)) // 최근 30%는 보호
+        for i = 0 to n0 - 1
+            rm = useFilter and i < protect and array.get(aC, i) > thresh
+            if not rm
+                array.push(fH, array.get(aH, i))
+                array.push(fL, array.get(aL, i))
+                array.push(fT, array.get(aT, i))
+
+    // 우측 연장 좌표
+    sz       = array.size(aT)
+    tfMs     = sz >= 2 ? array.get(aT, sz - 1) - array.get(aT, sz - 2) : 604800000
+    lastWT   = sz >= 1 ? array.get(aT, sz - 1) : time
+    rightX   = math.max(lastWT, time) + futureWks * tfMs
+
+    // 패널 헤더
+    if showPanel
+        hb = color.new(color.gray, 70)
+        table.cell(panel, 0, 0, "채널", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 1, 0, "터치", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 2, 0, "위치", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 3, 0, "판정", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 4, 0, "상단", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 5, 0, "중앙", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 6, 0, "하단", text_color = color.white, bgcolor = hb)
+        table.cell(panel, 7, 0, "신뢰", text_color = color.white, bgcolor = hb)
+
+    row     = 1
+    drawn   = 0
+    nowT    = time
+    logNow  = math.log(close)
+
+    // 방향별 처리 (desc=하락, asc=상승)
+    for pass = 0 to 1
+        isDesc = pass == 0
+        active = isDesc ? showDesc : showAsc
+        if active
+            [ok, tc, sMs, uT, uLg, lT, lLg] = findChannel(fH, fL, fT, pivotOrder, tolPct, isDesc)
+            if ok
+                col = isDesc ? descCol : ascCol
+                x1  = math.min(uT, lT)
+                // 선 작도 (로그 스케일에서 직선 = 빗각)
+                upln = line.new(x1, f_price(uLg, uT, sMs, x1), rightX, f_price(uLg, uT, sMs, rightX),
+                     xloc = xloc.bar_time, color = col, width = 2)
+                loln = line.new(x1, f_price(lLg, lT, sMs, x1), rightX, f_price(lLg, lT, sMs, rightX),
+                     xloc = xloc.bar_time, color = col, width = 2, style = line.style_dashed)
+                // 중앙선 (로그 공간 평균)
+                pm1 = math.exp(((uLg + sMs * (x1 - uT)) + (lLg + sMs * (x1 - lT))) / 2)
+                pm2 = math.exp(((uLg + sMs * (rightX - uT)) + (lLg + sMs * (rightX - lT))) / 2)
+                mdln = line.new(x1, pm1, rightX, pm2, xloc = xloc.bar_time,
+                     color = color.new(col, 35), width = 1, style = line.style_dotted)
+                array.push(gLines, upln)
+                array.push(gLines, loln)
+                array.push(gLines, mdln)
+                if fillOn
+                    array.push(gFills, linefill.new(upln, loln, color.new(col, 92)))
+
+                // 현재가 채널 내 위치
+                uN  = uLg + sMs * (nowT - uT)
+                lN  = lLg + sMs * (nowT - lT)
+                wN  = uN - lN
+                pos = wN != 0 ? (logNow - lN) / wN : na
+                verdict = "—"
+                if not na(pos)
+                    if isDesc
+                        verdict := pos > 1.0 ? "✅ 돌파" : pos >= 0.85 ? "🔴 매도" : pos <= 0.15 ? "✅ 반등" : "⚪ 하락내"
+                    else
+                        verdict := pos < 0 ? "⚠️ 이탈" : pos <= 0.15 ? "✅ 매수" : pos >= 0.85 ? "🟡 주의" : "⚪ 중립"
+                rel = tc >= 5 ? "높음" : tc >= 3 ? "보통" : "낮음"
+
+                if showPanel
+                    tcol = isDesc ? descCol : ascCol
+                    table.cell(panel, 0, row, isDesc ? "하락" : "상승", text_color = tcol)
+                    table.cell(panel, 1, row, str.tostring(tc), text_color = color.gray)
+                    table.cell(panel, 2, row, na(pos) ? "—" : str.tostring(pos * 100, "#.#") + "%", text_color = color.gray)
+                    table.cell(panel, 3, row, verdict, text_color = color.black)
+                    table.cell(panel, 4, row, str.tostring(math.exp(uN), format.mintick), text_color = color.gray)
+                    table.cell(panel, 5, row, str.tostring(math.exp((uN + lN) / 2), format.mintick), text_color = color.gray)
+                    table.cell(panel, 6, row, str.tostring(math.exp(lN), format.mintick), text_color = color.gray)
+                    table.cell(panel, 7, row, rel, text_color = color.gray)
+                row   += 1
+                drawn += 1
+
+    if showPanel and drawn == 0
+        table.cell(panel, 0, 1, "유효 채널 없음", text_color = color.gray)
+        table.cell(panel, 1, 1, sz < pivotOrder * 2 + 3 ? "데이터 부족" : "탐지 실패", text_color = color.gray)

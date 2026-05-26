@@ -106,13 +106,21 @@ position = (log(현재가) - 하단선_로그값) / 채널폭
 - 로그 스케일
 - 한글 폰트: `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`
 
+**트레이딩뷰 자동 작도 (선택):**
+- `scripts/bitgak_tradingview.pine` — 위 탐지 로직을 Pine Script v6로 포팅한 자체탐지 인디케이터
+- 트레이딩뷰 Pine 에디터에 붙여넣고 차트에 추가하면 어떤 종목·차트에서도 빗각 채널을 자동 작도
+- 상/중/하단 선 + 채널 음영 + 우측 미래 연장 + 위치·판정 패널 표시
+- **로그 스케일 필수** (선이 빗각으로 직선 렌더되도록). 탐지 TF·order·터치 오차·MAD 필터는 인디케이터 입력으로 조정
+- 주문/체결 로직 없는 시각화 전용
+
 ### Step 7: 추가 컨텍스트 (선택)
 - 웹 검색으로 최근 뉴스/이벤트 확인
 - 펀더멘털 악재(공모, 소송, 실적 등)가 있으면 빗각 판정과 별도로 경고
 - 포지션 보유 중이면 손절/익절 금액 계산
 
 ## 분석 코드 템플릿
-`scripts/bitgak_analyze.py` 참조 — 종목 티커를 인자로 받아 전체 파이프라인 실행
+- `scripts/bitgak_analyze.py` — 종목 티커를 인자로 받아 전체 파이프라인 실행 (yfinance 데이터 → PNG 차트)
+- `scripts/bitgak_tradingview.pine` — 트레이딩뷰 자체탐지 인디케이터 (실시간 차트 자동 작도)
 
 ## 주의사항
 - 빗각은 기술적 분석이며 투자 조언이 아님
