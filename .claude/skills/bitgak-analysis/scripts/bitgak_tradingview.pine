@@ -58,7 +58,13 @@ if newBar and not na(hH[1])
 // 반환: [found, touches, slopeMs, upT, upLog, loT, loLog]
 //   slopeMs : log-price / ms 기울기 (상·하단 공유)
 //   상단선은 (upT, upLog), 하단선은 (loT, loLog) 통과
-findChannel(array<float> H, array<float> L, array<int> T, int order, float tol, bool desc) =>
+// 작업 배열(lH·lL·pv)은 전역 var 를 재사용한다. 조건부 호출 함수 안에서
+// array.new 를 매 호출 새로 만들면 배열 크기 상태가 어긋나 OOB 가 발생함.
+var array<float> wLH = array.new<float>()
+var array<float> wLL = array.new<float>()
+var array<int>   wPV = array.new<int>()
+
+findChannel(array<float> H, array<float> L, array<int> T, array<float> lH, array<float> lL, array<int> pv, int order, float tol, bool desc) =>
     n        = array.size(H)
     found    = false
     touches  = 0
@@ -68,14 +74,14 @@ findChannel(array<float> H, array<float> L, array<int> T, int order, float tol, 
     loT      = 0
     loLog    = 0.0
     if n >= (2 * order + 3)
-        // 로그 변환 (꼬리 기준)
-        lH = array.new<float>(n)
-        lL = array.new<float>(n)
+        // 로그 변환 (꼬리 기준) — 전역 var 배열 재사용
+        array.clear(lH)
+        array.clear(lL)
+        array.clear(pv)
         for i = 0 to n - 1
-            array.set(lH, i, math.log(array.get(H, i)))
-            array.set(lL, i, math.log(array.get(L, i)))
+            array.push(lH, math.log(array.get(H, i)))
+            array.push(lL, math.log(array.get(L, i)))
         // 극값 피벗 (argrelextrema order=N 동등: 양쪽 N봉 모두 비교)
-        pv = array.new<int>()
         for i = order to n - 1 - order
             base = desc ? array.get(H, i) : array.get(L, i)
             ok   = true
@@ -95,7 +101,11 @@ findChannel(array<float> H, array<float> L, array<int> T, int order, float tol, 
         bIc       = -1
         // 쌍별 채널 스코어링 (touches × span 최대)
         for ii = 0 to np - 1
+            if ii >= array.size(pv)
+                break
             for jj = ii + 1 to np - 1
+                if jj >= array.size(pv)
+                    break
                 ia = array.get(pv, ii)
                 ib = array.get(pv, jj)
                 if ib - ia < 3
@@ -251,7 +261,7 @@ if barstate.islast
         isDesc = pass == 0
         active = isDesc ? showDesc : showAsc
         if active
-            [ok, tc, sMs, uT, uLg, lT, lLg] = findChannel(fH, fL, fT, pivotOrder, tolPct, isDesc)
+            [ok, tc, sMs, uT, uLg, lT, lLg] = findChannel(fH, fL, fT, wLH, wLL, wPV, pivotOrder, tolPct, isDesc)
             if ok
                 col = isDesc ? descCol : ascCol
                 x1  = math.min(uT, lT)
