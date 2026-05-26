@@ -1,0 +1,27 @@
+{
+  "initial_equity": "10000",
+  "final_equity": "26898.0952592375762317835000",
+  "total_return": "1.68980952592375762317835",
+  "win_rate": "0.4810126582278481012658227848",
+  "n_trades": 79,
+  "total_costs": "307.8259856735769182165000",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT"
+  ],
+  "bar_counts": {
+    "BTCUSDT": 2459,
+    "ETHUSDT": 2459
+  },
+  "params": {
+    "entry_window": 20,
+    "exit_window": 11,
+    "atr_window": 20,
+    "atr_stop_multiplier": "2.0",
+    "trend_sma_window": 200,
+    "risk_per_trade": "0.02",
+    "leverage": "1.0",
+    "taker_fee": "0.0004",
+    "slippage": "0.0005"
+  }
+}
