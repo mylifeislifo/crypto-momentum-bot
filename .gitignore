@@ -16,4 +16,8 @@ paper_state.json
 recorded_ticks/
 *.ndjson
 data/turtle_bot_cache/
-results/turtle_bot/
+# turtle_bot results: ignore cache/raw data files; keep verifiable JSON/MD/JSONL
+# (audit-log §2.1·§2.3: trade logs and summaries must be checkable in origin)
+results/turtle_bot/**/*.csv
+results/turtle_bot/**/*.parquet
+results/turtle_bot/**/equity_curve.*
