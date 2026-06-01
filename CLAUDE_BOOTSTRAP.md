@@ -9,28 +9,25 @@
 
 ---
 
-## 0. 가장 먼저 할 일 — `doc/` 전체 무조건 흡수
+## 0. 가장 먼저 할 일 — `doc/INDEX.md` 흡수 + 트리거별 본문 lazy Read
 
-새 세션은 **어떤 작업·답변에도 착수하기 전에 `doc/` 하위 가이드 전부를 무조건 읽는다.**
-일부만 읽거나 "도메인에 맞는 것만" 고르는 것을 금지한다. 아래 10개 파일을 **전부** 흡수한다:
+새 세션은 **어떤 작업·답변에도 착수하기 전에 다음 2개만 무조건 흡수**한다:
 
 1. `CLAUDE.md` (루트) — 진입점, 핵심 룰 5종, 우선순위
-2. `doc/README.md` — 운영 매뉴얼 구조
-3. `doc/skill-define.md` — doc 변경 메타 표준
-4. `doc/domains/security/rules.md` — **최상위 우선** (시크릿)
-5. `doc/domains/trading/rules.md` — 레버리지·Decimal·paper 게이트·퀀트 표준
-6. `doc/domains/automation/rules.md` — 웹 자동화·HITL
-7. `doc/skills/bot-ops.md` — 봇 운영 + "발언 신뢰성 0" SSOT
-8. `doc/skills/system-health.md` — 시스템 안정성·모니터링
-9. `doc/skills/infra-debug.md` — 인프라 디버깅 런북
-10. `doc/skills/progressive-gate.md` — 점진 진입 게이트
-11. `doc/skills/audit-log.md` — 감사 로그 표준
+2. `doc/INDEX.md` — 도메인·스킬·메타 카탈로그 (트리거 → 본문 위치)
 
-> **건너뛰지 말 것.** 위 전부를 흡수하기 전에는 트레이딩·시크릿·자동화·인프라 어떤 작업도 손대지 않는다.
+본문 룰(`doc/domains/*/rules.md`, `doc/skills/*.md`, `doc/skill-define.md`)은 **INDEX의 트리거 표에서 작업과 매칭되는 것만 즉시 Read**한다. "전부 읽기"는 더 이상 강제하지 않는다(Tier 0/1 구조 도입, INDEX §7 [2026.06.01]).
+
+> **건너뛰지 말 것 (코어 2개):** 위 2개를 흡수하기 전에는 어떤 작업도 손대지 않는다.
+> **트리거 누락 시:** 작업 영역에 매칭되는 본문을 못 찾으면 새 영역으로 간주 → `doc/skill-define.md`도 함께 Read.
 >
 > **surface별 적용:**
-> - **Claude Code (웹/CLI/IDE)** — `CLAUDE.md`가 위 doc 파일 전부를 `@import`로 자동·무조건 흡수한다. 별도 조치 불필요. (단, doc/에 **새 파일 추가 시 `CLAUDE.md`의 `@import` 목록과 위 §0 목록을 함께 갱신**해야 자동 흡수가 유지된다.)
-> - **Claude.ai 프로젝트 등 `CLAUDE.md`를 자동으로 읽지 않는 surface** — 프로젝트 지시사항에서 "이 파일을 먼저 읽고 위 10개를 전부 읽으라"고 강제한다.
+> - **Claude Code (웹/CLI/IDE)** — `CLAUDE.md`가 `@doc/INDEX.md`를 자동 흡수. 별도 조치 불필요. **doc/에 새 파일 추가 시 INDEX·CLAUDE.md 우선순위 항목·본 §2 목록을 동시 갱신.**
+> - **Claude.ai 프로젝트 등 `CLAUDE.md`를 자동으로 읽지 않는 surface** — 프로젝트 지시사항에서 "이 파일과 `doc/INDEX.md`를 먼저 읽고, INDEX의 트리거 매칭 본문을 Read하라"고 강제.
+
+### 코어 흡수 후 즉시 적용되는 핵심 룰 5종 (본문은 `CLAUDE.md`)
+
+1. `decimal.Decimal`만 / 2. 레버리지 2x / 3. paper 게이트 / 4. 시크릿 평문 금지 / 5. 봇·자기 발언 신뢰성 0
 
 그 다음: **최신 상태 직접 검증** (§3) — "봇·자기 발언 신뢰성 0" 원칙(`doc/skills/bot-ops.md §2.2`).
 
@@ -50,13 +47,16 @@
 
 ## 2. 코드·문서 지도 (Where things live)
 
-### 운영 룰 (반드시 우선 흡수)
-- `CLAUDE.md` — 진입점, 핵심 룰 5종
-- `doc/skill-define.md` — doc 변경 시 메타 표준
+### 운영 룰 (코어 — 항상 흡수)
+- `CLAUDE.md` — 진입점, 핵심 룰 5종, 우선순위
+- `doc/INDEX.md` — 도메인·스킬·메타 카탈로그(트리거 → 본문 lazy Read)
+
+### Tier 1 본문 (트리거 발동 시 Read)
 - `doc/domains/security/rules.md` — **최상위**, 시크릿 평문 금지
-- `doc/domains/trading/rules.md` — 레버리지 2x·Decimal 강제·paper 게이트·퀀트 실행 표준
-- `doc/domains/automation/rules.md` — 웹 자동화·HITL
-- `doc/skills/` — `bot-ops` / `system-health` / `infra-debug` / `progressive-gate` / `audit-log`
+- `doc/domains/trading/rules.md` — 레버리지 2x·Decimal·paper 게이트·퀀트 실행 표준
+- `doc/domains/automation/rules.md` — 브라우저 기반 웹 자동화·HITL
+- `doc/skills/` — `bot-ops` / `system-health` / `infra-debug` / `progressive-gate` / `audit-log` / `signal-validation` / `blog-automation`
+- `doc/skill-define.md` — doc/ 신설·삭제·이름변경·Tier 0/1 구조 변경 시
 
 ### 봇 코드 (`src/bot/`)
 | 영역 | 경로 | 역할 |
@@ -93,9 +93,9 @@ Claude.ai 프로젝트(로컬 git 없음)에서는 GitHub MCP `get_file_contents
 
 | 항목 | 마지막 검증값 | 검증일 |
 |------|---------------|--------|
-| 기준 커밋(main 머지) | `6601764` (Merge PR #2) | 2026-05-24 |
-| 운영 모드 기본값 | `paper` / `dry_run: true` | 2026-05-24 |
-| 레버리지 상한 | `2x` | 2026-05-24 |
+| 기준 커밋(main 머지) | `3f274fb` (#8 빗각 인디케이터) | 2026-06-01 |
+| 운영 모드 기본값 | `paper` / `dry_run: true` | 2026-06-01 |
+| 레버리지 상한 | `2x` (ISOLATED) | 2026-06-01 |
 
 > 위 값과 실제 `git log`/`config`가 다르면 **실제값을 신뢰**하고 이 표를 갱신·커밋한다.
 
