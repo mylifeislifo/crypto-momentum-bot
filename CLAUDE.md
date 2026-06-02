@@ -7,7 +7,7 @@
 ```
 domains/security/rules.md   ← 최상위 (보안은 어떤 룰도 우회 불가)
 domains/<other>/rules.md    ← trading, automation
-skills/*.md                 ← bot-ops, system-health, infra-debug, progressive-gate, audit-log
+skills/*.md                 ← 크로스커팅 스킬
 skill-define.md             ← 메타 (doc/ 자체 변경 시)
 ```
 
