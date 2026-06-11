@@ -137,16 +137,33 @@ def taker_ratio(buy: np.ndarray, sell: np.ndarray) -> np.ndarray:
     return r
 
 
-def trailing_quantile(x: np.ndarray, q: float, window: int, warmup: int) -> np.ndarray:
+def trailing_quantile(
+    x: np.ndarray, q: float, window: int, warmup: int,
+    where: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """Quantile of x over the STRICTLY-PAST window [t-window, t-1].
 
     Returns nan until `warmup` non-nan past observations exist. Because the
     window ends at t-1 (current bar excluded), the result at t is usable to
     gate an entry at t with no look-ahead (signal-validation §2.4).
+
+    `where`: optional boolean mask the same length as x. If provided, the
+    quantile is computed only at indices where the mask is True; everywhere
+    else the result stays nan. This is the fast path for backtests where the
+    quantile is only consulted at sparse candidate bars — O(n_cand · w log w)
+    instead of O(n · w log w) for multi-year inputs. Correctness is identical
+    because non-candidate bars never read the threshold.
     """
     n = len(x)
     out = np.full(n, np.nan, dtype=float)
-    for t in range(n):
+    indices: np.ndarray | range
+    if where is None:
+        indices = range(n)
+    else:
+        if len(where) != n:
+            raise ValueError("where mask length must equal x length")
+        indices = np.where(where)[0]
+    for t in indices:
         lo = max(0, t - window)
         past = x[lo:t]  # excludes t
         past = past[~np.isnan(past)]
@@ -316,9 +333,13 @@ def scan_and_simulate(
     t_ratio = taker_ratio(m.taker_buy, m.taker_sell)
     cap = capitulation_flag(oi_d, t_ratio, entry_p)
 
-    # N1: trailing lower-tail quantile of OI delta (more negative = more extreme)
+    # N1: trailing lower-tail quantile of OI delta (more negative = more extreme).
+    # Only computed at candidate bars (where cap is True) — the threshold is
+    # never read elsewhere, so this is identical in result but O(n_cand) instead
+    # of O(n). Critical for multi-year backtests; see trailing_quantile docstring.
     intensity_threshold = trailing_quantile(
-        oi_d, regime_p.intensity_quantile, regime_p.intensity_window, regime_p.intensity_warmup
+        oi_d, regime_p.intensity_quantile, regime_p.intensity_window,
+        regime_p.intensity_warmup, where=cap,
     )
 
     if systemic_count is None:

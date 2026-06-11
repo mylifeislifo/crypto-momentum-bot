@@ -128,13 +128,26 @@ def gen_demo(seed: int = 42, n: int = 2304) -> dict[str, MarketArrays]:
 
 
 async def _fetch_symbol(session, symbol: str, days: int) -> MarketArrays:
+    """Pull 5m klines + OI history for one symbol.
+
+    Pagination guard: both Binance endpoints can stall a naive loop. klines
+    will re-return the in-progress current bar when startTime catches up to
+    now; openInterestHist (`period=5m`) only retains the last ~30 days, so a
+    startTime outside that window is silently clamped and the same 500-row
+    batch returns forever. We break the moment `cur` fails to advance past
+    the previous request's last timestamp — same correctness, no hang.
+    """
     import aiohttp  # noqa: F401  (only needed on the fetch path)
     now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     start_ms = now_ms - days * 86_400_000
 
     klines: list[list] = []
     cur = start_ms
+    prev_cur = -1
     while cur < now_ms:
+        if cur <= prev_cur:
+            break  # pagination not advancing — Binance is re-returning the same batch
+        prev_cur = cur
         async with session.get(_BINANCE_KLINE, params={
             "symbol": symbol, "interval": "5m", "startTime": cur, "endTime": now_ms, "limit": 1500,
         }) as r:
@@ -145,10 +158,17 @@ async def _fetch_symbol(session, symbol: str, days: int) -> MarketArrays:
         klines.extend(batch)
         cur = int(batch[-1][0]) + 1
 
-    # openInterestHist: max 500/call, last ~30d only
+    # openInterestHist: max 500/call, only the last ~30d are retained.
+    # Caller asking for >30d still works — older OI is left nan and ffilled in
+    # the kline merge below — but we MUST guard the pagination cursor or the
+    # API's silent clamping turns the loop infinite.
     oi_map: dict[int, float] = {}
     cur = start_ms
+    prev_cur = -1
     while cur < now_ms:
+        if cur <= prev_cur:
+            break
+        prev_cur = cur
         async with session.get(_BINANCE_OI_HIST, params={
             "symbol": symbol, "period": "5m", "startTime": cur, "endTime": now_ms, "limit": 500,
         }) as r:
@@ -158,7 +178,10 @@ async def _fetch_symbol(session, symbol: str, days: int) -> MarketArrays:
             break
         for row in batch:
             oi_map[int(row["timestamp"])] = float(row["sumOpenInterest"])
-        cur = int(batch[-1]["timestamp"]) + 1
+        next_cur = int(batch[-1]["timestamp"]) + 1
+        if next_cur <= cur:
+            break  # last timestamp didn't move forward — retention boundary hit
+        cur = next_cur
 
     rows = []
     last_oi = float("nan")
