@@ -44,6 +44,7 @@ risk:
   long_bias_window: 20
   long_bias_min: 0.80
   short_max_daily: 1
+  flatten_on_shutdown: false     # hold positions across restart (winners run); true = flatten on every stop
 
 execution:
   retry_max: 3

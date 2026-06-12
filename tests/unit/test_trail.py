@@ -396,3 +396,46 @@ class TestTimeStop:
         assert mgr.due_time_exits() == []   # M15 must not age the position
         mgr.on_new_bar(_bar(high=50000, low=50000, close=50000))  # one real 5m bar
         assert len(mgr.due_time_exits()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Persistence — trail state (peak / be_armed / bars_held / stop) survives a
+# restart so winners keep running and the time-stop clock isn't reset.
+# ---------------------------------------------------------------------------
+
+def test_state_persists_and_reloads(tmp_path):
+    f = tmp_path / "trail.json"
+    mgr = TrailingStopManager(
+        atr_multiplier=1.5, atr_period=3, breakeven_trigger_pct=0.01,
+        time_stop_bars=48, state_file=f,
+    )
+    mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+    mgr.on_new_bar(_bar(high=50500, low=50500, close=50500))  # arms BE, bars_held=1, stop→50000
+
+    # a fresh manager on the same file recovers the full state (simulates restart)
+    mgr2 = TrailingStopManager(
+        atr_multiplier=1.5, atr_period=3, breakeven_trigger_pct=0.01,
+        time_stop_bars=48, state_file=f,
+    )
+    assert mgr2.active_position_ids() == ["p"]
+    st = mgr2._positions["p"]
+    assert st.be_armed is True               # proven winner stays exempt from time-stop
+    assert st.bars_held == 1                  # time-stop clock not reset
+    assert st.entry_price == Decimal("50000")
+    assert mgr2.get_current_stop("p") == Decimal("50000.00")  # breakeven floor preserved
+
+
+def test_state_removed_on_close(tmp_path):
+    f = tmp_path / "trail.json"
+    mgr = TrailingStopManager(atr_multiplier=1.5, state_file=f)
+    mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+    mgr.on_close("p")
+    mgr2 = TrailingStopManager(atr_multiplier=1.5, state_file=f)
+    assert mgr2.active_position_ids() == []   # closed position not resurrected
+
+
+def test_no_persistence_without_state_file(tmp_path):
+    # default (no state_file) must not touch disk — keeps the unit tests pure
+    mgr = TrailingStopManager(atr_multiplier=1.5)
+    mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+    assert not (tmp_path / "trail.json").exists()

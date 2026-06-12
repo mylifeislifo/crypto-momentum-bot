@@ -61,6 +61,52 @@ class OrderManager:
         self._cfg = config
         self._last_equity_check = 0.0
 
+    async def recover_positions(self) -> None:
+        """Reconcile positions held across a restart so the bot resumes managing
+        them (winner-asymmetry survives the scheduled-restart cycle).
+
+        The trail manager has already re-loaded its persisted state on construction;
+        here we align it with the gateway's actual open positions and fix the guard
+        count (a fresh guard thinks 0 are open, which would over-admit entries)."""
+        sym = self._cfg.exchange.symbol
+
+        if isinstance(self._gw, PaperFuturesGateway):
+            gw_ids = set(self._gw.active_position_ids)
+            trail_ids = set(self._trail.active_position_ids())
+            # orphan trail entries (no live position) → drop
+            for pid in trail_ids - gw_ids:
+                self._trail.on_close(pid)
+                logger.warning("order_manager.recover_dropped_orphan", position_id=pid)
+            # gateway positions missing trail state → re-register degraded (saved SL
+            # becomes the floor; peak=entry, be_armed=False, bars_held=0)
+            for pid in gw_ids - trail_ids:
+                pp = self._gw._positions[pid]
+                entry = Decimal(pp.entry_price)
+                self._trail.register(
+                    position_id=pid, side=Side(pp.side), sl_order_id=pp.sl_order_id,
+                    initial_stop=Decimal(pp.sl_price), entry_price=entry,
+                    atr=self._trail.current_atr() or entry * Decimal("0.005"),
+                )
+                logger.warning("order_manager.recover_reregistered_degraded", position_id=pid)
+            n = len(self._gw.active_position_ids)
+        else:
+            # live: the exchange holds the net position + server-side SL across the
+            # restart; re-register into the trail if we lost its state
+            pos = await self._gw.get_position(sym)
+            n = 0
+            if pos is not None and pos.qty > 0:
+                n = 1
+                if pos.position_id not in self._trail.active_position_ids():
+                    self._trail.register(
+                        position_id=pos.position_id, side=pos.side, sl_order_id=pos.sl_order_id,
+                        initial_stop=pos.sl_price, entry_price=pos.entry_price,
+                        atr=self._trail.current_atr() or pos.entry_price * Decimal("0.005"),
+                    )
+
+        if n > 0:
+            self._guard.recover_open_count(n)
+            logger.info("order_manager.positions_recovered", count=n)
+
     async def run(
         self,
         signal_queue: asyncio.Queue,
@@ -68,6 +114,7 @@ class OrderManager:
         ob_snapshot_queue: asyncio.Queue,
     ) -> None:
         logger.info("order_manager.started", mode=self._cfg.mode.value)
+        await self.recover_positions()
 
         while True:
             try:

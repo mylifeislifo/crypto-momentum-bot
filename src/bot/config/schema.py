@@ -55,6 +55,11 @@ class RiskCfg(BaseModel):
     long_bias_window: int = 20          # rolling window for 80% long check
     long_bias_min: float = 0.80
     short_max_daily: int = 1
+    # hold positions across a (graceful) restart instead of flattening on shutdown, so
+    # winners keep running through the scheduled-restart cycle. Trail state is persisted
+    # and recovered on startup; the server-side SL protects during downtime. Set True for
+    # the old "flatten everything on every stop" behaviour.
+    flatten_on_shutdown: bool = False
 
     @field_validator("long_sl_pct", "short_sl_pct")
     @classmethod
