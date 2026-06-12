@@ -229,3 +229,46 @@ async def test_circuit_breaker_reconciles_guard_count(tmp_path):
 
     assert len(gw.active_position_ids) == 0      # all positions closed
     assert guard.open_position_count == 0        # F2: reconciled (was the latent bug)
+
+
+@pytest.mark.asyncio
+async def test_recover_reregisters_gateway_position_into_trail(tmp_path):
+    """F4: a position the gateway holds but the trail lost (crash before trail save)
+    must be re-registered on startup so it resumes trail/BE/time-stop management,
+    and the guard count must reflect it."""
+    from bot.core.enums import PositionSide
+
+    config = AppConfig()
+    notify_q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    gw = PaperFuturesGateway(initial_balance=Decimal("10000"), state_file=tmp_path / "paper.json")
+    gw.update_price(_MID)
+    guard = RiskGuard(config.risk, config.exchange)
+    trail = TrailingStopManager(atr_multiplier=config.risk.trail_atr_multiplier)  # no state → empty
+    om = OrderManager(gw, guard, trail, notify_q, config)
+
+    gw.register_position(
+        position_id="held", symbol=config.exchange.symbol, side=Side.LONG,
+        position_side=PositionSide.LONG, qty=Decimal("0.01"), entry_price=_MID,
+        sl_price=Decimal("49100"), sl_order_id="sl_held",
+    )
+    assert trail.active_position_ids() == []     # trail state was lost
+
+    await om.recover_positions()
+
+    assert trail.active_position_ids() == ["held"]   # re-registered into trail
+    assert guard.open_position_count == 1            # guard count reconciled
+
+
+@pytest.mark.asyncio
+async def test_recover_drops_orphan_trail_entry(tmp_path):
+    """A trail entry with no matching gateway position (stale save) is dropped."""
+    config = AppConfig()
+    notify_q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    gw = PaperFuturesGateway(initial_balance=Decimal("10000"), state_file=tmp_path / "paper.json")
+    guard = RiskGuard(config.risk, config.exchange)
+    trail = TrailingStopManager(atr_multiplier=config.risk.trail_atr_multiplier)
+    om = OrderManager(gw, guard, trail, notify_q, config)
+
+    trail.register("ghost", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+    await om.recover_positions()
+    assert trail.active_position_ids() == []     # orphan dropped (no live position)

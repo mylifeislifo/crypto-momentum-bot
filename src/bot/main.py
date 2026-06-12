@@ -96,6 +96,7 @@ async def main(config_path: str = "config/default.yaml", override_path: Optional
         breakeven_offset_pct=config.risk.breakeven_offset_pct,
         time_stop_bars=config.risk.time_stop_bars,
         max_hold_bars=config.risk.max_hold_bars,
+        state_file=Path("trail_state.json"),   # persist trail state across restarts
     )
     bar_builder = BarBuilder(intervals=[Interval.M5, Interval.M15])
     order_mgr = OrderManager(gateway, guard, trail, notify_queue, config)
@@ -169,13 +170,18 @@ async def main(config_path: str = "config/default.yaml", override_path: Optional
                 t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        # close all positions before exit
-        try:
-            fills = await gateway.close_all_positions(config.exchange.symbol)
-            if fills:
-                log.info("bot.positions_closed_on_shutdown", count=len(fills))
-        except Exception as exc:
-            log.error("bot.shutdown_close_failed", error=str(exc))
+        # Hold positions across a restart (winner-asymmetry) unless explicitly told to
+        # flatten. Trail state is persisted, the server-side SL protects during downtime,
+        # and recover_positions() resumes management on the next start.
+        if config.risk.flatten_on_shutdown:
+            try:
+                fills = await gateway.close_all_positions(config.exchange.symbol)
+                if fills:
+                    log.info("bot.positions_closed_on_shutdown", count=len(fills))
+            except Exception as exc:
+                log.error("bot.shutdown_close_failed", error=str(exc))
+        else:
+            log.info("bot.positions_held_across_restart")
 
         if isinstance(gateway, BinanceFuturesGateway):
             await gateway.disconnect()

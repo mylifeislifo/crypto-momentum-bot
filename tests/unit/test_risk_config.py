@@ -78,3 +78,7 @@ def test_max_hold_allowed_without_breakeven():
     # an unconditional hard cap cuts everyone regardless of proof → no breakeven needed
     cfg = RiskCfg(time_stop_bars=0, max_hold_bars=100, breakeven_trigger_pct=0.0)
     assert cfg.max_hold_bars == 100
+
+
+def test_flatten_on_shutdown_defaults_to_hold():
+    assert RiskCfg().flatten_on_shutdown is False   # hold positions across restart by default

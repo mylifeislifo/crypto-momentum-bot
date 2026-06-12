@@ -129,6 +129,13 @@ class RiskGuard:
             open_positions=self._state.open_position_count,
         )
 
+    def recover_open_count(self, count: int) -> None:
+        """Reconcile the open-position count to positions recovered on startup,
+        so a fresh guard doesn't think 0 are open and over-admit entries past
+        max_positions."""
+        self._state.open_position_count = max(0, count)
+        logger.info("guard.open_count_recovered", open_positions=self._state.open_position_count)
+
     @property
     def is_trading_allowed(self) -> bool:
         return self._state.trading_allowed

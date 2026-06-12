@@ -19,9 +19,11 @@ is handled by execution/order_manager.py, which receives TrailUpdate objects
 from on_new_bar().
 """
 
+import json
 import structlog
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 
 from ..core.clock import utc_now
@@ -69,6 +71,7 @@ class TrailingStopManager:
         breakeven_offset_pct: float = 0.0,
         time_stop_bars: int = 0,
         max_hold_bars: int = 0,
+        state_file: Optional[Path] = None,
     ) -> None:
         self._multiplier = Decimal(str(atr_multiplier))
         self._atr_period = atr_period
@@ -76,8 +79,10 @@ class TrailingStopManager:
         self._be_offset = Decimal(str(breakeven_offset_pct))
         self._time_stop_bars = time_stop_bars   # 0 disables conditional time stop
         self._max_hold_bars = max_hold_bars     # 0 disables hard cap
+        self._state_file = state_file           # None disables persistence
         self._positions: dict[str, TrailState] = {}
         self._bar_history_5m: list[Bar] = []
+        self.load_state()
 
     def register(
         self,
@@ -106,6 +111,7 @@ class TrailingStopManager:
             initial_stop=str(initial_stop),
             atr=str(effective_atr),
         )
+        self._persist()
 
     def on_new_bar(self, bar: Bar) -> list[TrailUpdate]:
         """Call on every new Bar. Returns SL amendments to execute."""
@@ -126,15 +132,19 @@ class TrailingStopManager:
             update = self._tick(state, bar)
             if update is not None:
                 updates.append(update)
+        if bar.interval == Interval.M5:
+            self._persist()   # bars_held / peak / atr / stop changed this bar
         return updates
 
     def update_sl_order_id(self, position_id: str, new_sl_order_id: str) -> None:
         """Called by order_manager after a successful SL amendment."""
         if state := self._positions.get(position_id):
             state.sl_order_id = new_sl_order_id
+            self._persist()
 
     def on_close(self, position_id: str) -> None:
-        self._positions.pop(position_id, None)
+        if self._positions.pop(position_id, None) is not None:
+            self._persist()
 
     def get_current_stop(self, position_id: str) -> Optional[Decimal]:
         state = self._positions.get(position_id)
@@ -145,6 +155,56 @@ class TrailingStopManager:
         Used to seed a NEW position's initial trail offset from real price range
         rather than a stale/garbage value."""
         return compute_atr(self._bar_history_5m, self._atr_period)
+
+    # ------------------------------------------------------------------
+    # Persistence — survive restarts so winners keep running across the
+    # bot's scheduled restart cycle (peak / be_armed / bars_held are state
+    # the time stop and breakeven depend on; losing them would re-arm the
+    # time-stop clock and cut proven winners). order_manager.recover_positions
+    # reconciles these against the gateway's positions on startup.
+    # ------------------------------------------------------------------
+
+    def _persist(self) -> None:
+        if self._state_file is None:
+            return
+        try:
+            data = {
+                pid: {
+                    "side": s.side.value,
+                    "sl_order_id": s.sl_order_id,
+                    "current_stop": str(s.current_stop),
+                    "peak_price": str(s.peak_price),
+                    "atr": str(s.atr),
+                    "entry_price": str(s.entry_price),
+                    "be_armed": s.be_armed,
+                    "bars_held": s.bars_held,
+                }
+                for pid, s in self._positions.items()
+            }
+            self._state_file.write_text(json.dumps(data, indent=2))
+        except Exception as exc:
+            logger.warning("trail.persist_failed", error=str(exc))
+
+    def load_state(self) -> None:
+        if self._state_file is None or not self._state_file.exists():
+            return
+        try:
+            data = json.loads(self._state_file.read_text())
+            for pid, d in data.items():
+                self._positions[pid] = TrailState(
+                    position_id=pid,
+                    side=Side(d["side"]),
+                    sl_order_id=d["sl_order_id"],
+                    current_stop=Decimal(d["current_stop"]),
+                    peak_price=Decimal(d["peak_price"]),
+                    atr=Decimal(d["atr"]),
+                    entry_price=Decimal(d["entry_price"]),
+                    be_armed=bool(d["be_armed"]),
+                    bars_held=int(d["bars_held"]),
+                )
+            logger.info("trail.state_loaded", positions=len(self._positions))
+        except Exception as exc:
+            logger.warning("trail.state_load_failed", error=str(exc))
 
     def active_position_ids(self) -> list[str]:
         return list(self._positions.keys())
