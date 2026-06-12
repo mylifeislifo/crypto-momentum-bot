@@ -37,6 +37,8 @@ risk:
   trail_lookback_bars: 5
   breakeven_trigger_pct: 0.01    # +1% favorable → stop ratchets to (net) breakeven (winner-asymmetry)
   breakeven_offset_pct: 0.0012   # ~round-trip taker+slippage → BE stop nets ≈0, not a fee-sized loss
+  time_stop_bars: 48             # cut UNPROVEN (be not armed) positions after 4h of 5m bars — TUNE in paper
+  max_hold_bars: 0               # hard cap for any position; 0 = winners run free on the trail
   daily_loss_limit: -0.03
   circuit_reset_hour_kst: 9
   long_bias_window: 20
