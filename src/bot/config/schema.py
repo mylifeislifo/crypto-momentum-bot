@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..core.enums import MarginType, Mode
@@ -64,6 +64,18 @@ class RiskCfg(BaseModel):
         if v < 0:
             raise ValueError("breakeven percentages must be >= 0 (0 disables breakeven)")
         return v
+
+    @model_validator(mode="after")
+    def breakeven_offset_below_trigger(self) -> "RiskCfg":
+        # If the offset met/exceeded the trigger, the breakeven stop would sit at or
+        # above the price that armed it → an SL above market → the amendment is
+        # rejected by the exchange and breakeven silently fails to engage.
+        if self.breakeven_trigger_pct > 0 and self.breakeven_offset_pct >= self.breakeven_trigger_pct:
+            raise ValueError(
+                "breakeven_offset_pct must be < breakeven_trigger_pct "
+                f"(got offset={self.breakeven_offset_pct}, trigger={self.breakeven_trigger_pct})"
+            )
+        return self
 
 
 class ExecutionCfg(BaseModel):

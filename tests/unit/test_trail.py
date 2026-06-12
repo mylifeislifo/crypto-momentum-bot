@@ -299,3 +299,13 @@ class TestBreakeven:
         updates = mgr.on_new_bar(_bar(high=50500, low=50050, close=50100))
         assert len(updates) == 1
         assert updates[0].new_stop_price == Decimal("50050.00")  # 50000 * 1.001
+
+    def test_breakeven_holds_when_price_pulls_back_to_entry(self):
+        # once armed, a pullback toward entry must NOT lower the stop below breakeven
+        mgr = _be_manager(trigger=0.01)
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        mgr.on_new_bar(_bar(high=50500, low=50500, close=50500))  # arms BE → floor 50000
+        assert mgr.get_current_stop("p") == Decimal("50000.00")
+        updates = mgr.on_new_bar(_bar(high=50000, low=49900, close=49950))  # falls back
+        assert updates == []                                  # no lowering emitted
+        assert mgr.get_current_stop("p") == Decimal("50000.00")  # held at breakeven
