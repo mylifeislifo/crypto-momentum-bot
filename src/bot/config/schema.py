@@ -41,6 +41,10 @@ class RiskCfg(BaseModel):
     short_sl_pct: float = -0.0075       # -0.75% (midpoint of -0.5% to -1%)
     trail_atr_multiplier: float = 1.5
     trail_lookback_bars: int = 5
+    # breakeven: once price moves +trigger% in favor, ratchet the stop to entry so a
+    # winner can never round-trip to a loss (winner-asymmetry / exit-alpha, trading §3).
+    breakeven_trigger_pct: float = 0.01   # +1% favorable excursion arms breakeven
+    breakeven_offset_pct: float = 0.0     # extra buffer beyond entry for the BE stop (e.g. fees); 0 = exact entry
     daily_loss_limit: float = -0.03     # circuit breaker at -3%
     circuit_reset_hour_kst: int = 9
     long_bias_window: int = 20          # rolling window for 80% long check
@@ -52,6 +56,13 @@ class RiskCfg(BaseModel):
     def must_be_negative(cls, v: float) -> float:
         if v >= 0:
             raise ValueError("SL percentages must be negative")
+        return v
+
+    @field_validator("breakeven_trigger_pct", "breakeven_offset_pct")
+    @classmethod
+    def must_be_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("breakeven percentages must be >= 0 (0 disables breakeven)")
         return v
 
 
