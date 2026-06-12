@@ -46,6 +46,7 @@ from bot.research.c2_combo import (  # noqa: E402
     MarketArrays,
     RegimeParams,
     capitulation_flag,
+    normalize_ts_seconds,
     oi_delta_pct,
     run_comparison,
     systemic_capitulation_count,
@@ -62,8 +63,9 @@ _BINANCE_OI_HIST = "https://fapi.binance.com/futures/data/openInterestHist"
 # ---------------------------------------------------------------------------
 
 def load_csv(path: Path) -> MarketArrays:
-    """Load one symbol's canonical CSV → MarketArrays. ts may be unix-seconds or
-    ISO-8601; everything else float."""
+    """Load one symbol's canonical CSV → MarketArrays. ts may be unix seconds,
+    unix milliseconds (Binance S3 dumps), or ISO-8601; everything else float.
+    Millisecond timestamps are normalised to seconds (normalize_ts_seconds)."""
     cols: dict[str, list[float]] = {k: [] for k in CANONICAL_SCHEMA.split(",")}
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
@@ -74,13 +76,18 @@ def load_csv(path: Path) -> MarketArrays:
             cols["ts"].append(_parse_ts(row["ts"]))
             for k in ("open", "high", "low", "close", "oi", "taker_buy", "taker_sell"):
                 cols[k].append(float(row[k]))
-    return MarketArrays(**{k: np.asarray(v, dtype=float) for k, v in cols.items()})
+    arrays = {k: np.asarray(v, dtype=float) for k, v in cols.items()}
+    arrays["ts"] = normalize_ts_seconds(arrays["ts"])  # ms (S3) → seconds
+    try:
+        return MarketArrays(**arrays)
+    except ValueError as exc:  # surface which file tripped the ts/length invariant
+        raise ValueError(f"{path.name}: {exc}") from exc
 
 
 def _parse_ts(s: str) -> float:
     s = s.strip()
     try:
-        return float(s)  # unix seconds (or ms — normalised below if huge)
+        return float(s)  # unix seconds OR milliseconds; normalised by the caller
     except ValueError:
         return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
 
@@ -187,7 +194,6 @@ async def _fetch_symbol(session, symbol: str, days: int) -> MarketArrays:
     last_oi = float("nan")
     for k in klines:
         ts_ms = int(k[0])
-        close_ts = ts_ms + 300_000
         last_oi = oi_map.get(ts_ms, last_oi)  # ffill (trading §7.2)
         buy = float(k[9])               # taker buy base volume
         sell = float(k[5]) - buy        # total - buy
@@ -271,6 +277,9 @@ def main() -> int:
 
     fixed = results[ExitMode.FIXED_HOLD.value]
     trail = results[ExitMode.TRAILING_1491.value]
+    # run_comparison scores both modes on one identical entry set, so the counts
+    # must match; if they ever diverge the isolation is broken (R5).
+    assert fixed.n_trades == trail.n_trades, "exit-alpha entry sets diverged"
 
     print("\n" + "=" * 78)
     print(f"C-2 × 1491-exit × regime[{args.regime}]   traded={args.traded}   "
@@ -281,7 +290,7 @@ def main() -> int:
     print("-" * 78)
     exit_alpha = float(trail.mean_return) - float(fixed.mean_return)
     print(f"  EXIT ALPHA (R5): trailing − fixed = {exit_alpha:+.4%} per trade "
-          f"(same entries, exit rule only)")
+          f"(identical {fixed.n_trades}-entry set, exit rule only)")
     print(f"  Independent crisis episodes: {trail.n_independent_episodes} "
           f"(signal-validation §2.2 — a handful of events, not {trail.n_trades} IID samples)")
     if trail.n_independent_episodes < 8:
