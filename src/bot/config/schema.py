@@ -100,6 +100,20 @@ class RiskCfg(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def time_stop_requires_breakeven(self) -> "RiskCfg":
+        # The conditional time stop exempts PROVEN winners, where "proven" == breakeven
+        # armed. With breakeven disabled (trigger 0) nothing ever arms, so the time stop
+        # would cut winners too — degenerating into a blunt max-hold and defeating the
+        # winner-asymmetry it exists for. Use max_hold_bars for an unconditional cap.
+        if self.time_stop_bars > 0 and self.breakeven_trigger_pct <= 0:
+            raise ValueError(
+                "time_stop_bars requires breakeven_trigger_pct > 0 "
+                "(the proven-winner exemption depends on breakeven arming; "
+                "use max_hold_bars for an unconditional time cap)"
+            )
+        return self
+
 
 class ExecutionCfg(BaseModel):
     retry_max: int = 3
