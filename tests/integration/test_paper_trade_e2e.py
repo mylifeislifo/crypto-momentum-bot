@@ -272,3 +272,85 @@ async def test_recover_drops_orphan_trail_entry(tmp_path):
     trail.register("ghost", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
     await om.recover_positions()
     assert trail.active_position_ids() == []     # orphan dropped (no live position)
+
+
+class _FakeLiveGateway:
+    """Minimal non-paper gateway to exercise the live _amend_sl path (F5)."""
+
+    def __init__(self, qty=Decimal("0.01"), fail_place=False):
+        self._qty = qty
+        self._fail_place = fail_place
+        self.placed: list = []
+        self.cancelled: list = []
+        self._n = 0
+
+    async def get_position(self, symbol):
+        from bot.core.enums import PositionSide
+        from bot.core.types import Position
+        if self._qty <= 0:
+            return None
+        return Position(
+            position_id="live", symbol=symbol, side=Side.LONG, position_side=PositionSide.LONG,
+            qty=self._qty, entry_price=Decimal("50000"), current_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"), leverage=2, sl_order_id="old_sl",
+            sl_price=Decimal("49100"), opened_at=_TS, updated_at=_TS,
+        )
+
+    async def place_order(self, **kw):
+        from bot.core.enums import OrderStatus
+        from bot.core.types import Order
+        if self._fail_place:
+            raise RuntimeError("exchange rejected stop")
+        self._n += 1
+        oid = f"new_sl_{self._n}"
+        self.placed.append((kw["stop_price"], oid))
+        return Order(
+            id=oid, client_order_id=oid, symbol=kw["symbol"], side=kw["side"],
+            position_side=kw["position_side"], order_type=kw["order_type"], qty=kw["qty"],
+            price=None, stop_price=kw["stop_price"], status=OrderStatus.NEW, ts=_TS,
+            reduce_only=kw.get("reduce_only", False),
+        )
+
+    async def cancel_order(self, symbol, order_id):
+        self.cancelled.append(order_id)
+
+
+def _live_om(gw):
+    config = AppConfig()
+    guard = RiskGuard(config.risk, config.exchange)
+    trail = TrailingStopManager(atr_multiplier=config.risk.trail_atr_multiplier)
+    trail.register("live", Side.LONG, "old_sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+    om = OrderManager(gw, guard, trail, asyncio.Queue(maxsize=10), config)
+    return om, trail
+
+
+@pytest.mark.asyncio
+async def test_live_amend_places_new_sl_before_cancelling_old():
+    """F5: live amendment places the new stop (with the REAL position qty) and only
+    then cancels the old — never leaving the position unprotected."""
+    from bot.core.types import TrailUpdate
+
+    gw = _FakeLiveGateway()
+    om, trail = _live_om(gw)
+    upd = TrailUpdate(position_id="live", old_sl_order_id="old_sl",
+                      new_stop_price=Decimal("49500"), old_stop_price=Decimal("49100"), ts=_TS)
+    await om._amend_sl(upd)
+
+    assert [p[0] for p in gw.placed] == [Decimal("49500")]    # new SL placed with real qty
+    assert gw.cancelled == ["old_sl"]                          # old cancelled AFTER the place
+    assert trail._positions["live"].sl_order_id == "new_sl_1"  # trail repointed
+
+
+@pytest.mark.asyncio
+async def test_live_amend_keeps_old_sl_when_place_fails():
+    from bot.core.types import TrailUpdate
+
+    gw = _FakeLiveGateway(fail_place=True)
+    om, trail = _live_om(gw)
+    upd = TrailUpdate(position_id="live", old_sl_order_id="old_sl",
+                      new_stop_price=Decimal("49500"), old_stop_price=Decimal("49100"), ts=_TS)
+    await om._amend_sl(upd)   # placement fails
+
+    assert gw.placed == []
+    assert gw.cancelled == []                                  # old SL NOT cancelled → protected
+    assert trail._positions["live"].sl_order_id == "old_sl"    # unchanged

@@ -300,48 +300,49 @@ class OrderManager:
 
     async def _amend_sl(self, update: TrailUpdate) -> None:
         sym = self._cfg.exchange.symbol
-        if isinstance(self._gw, PaperFuturesGateway):
-            self._gw.update_sl_price(update.position_id, update.new_stop_price, update.old_sl_order_id)
-
-        # cancel old SL
-        try:
-            await self._gw.cancel_order(sym, update.old_sl_order_id)
-        except Exception as exc:
-            logger.warning("order_manager.cancel_sl_failed", error=str(exc))
-
-        # place new SL
         pos = self._trail._positions.get(update.position_id)
         if not pos:
             return
+
+        # Paper: the SL move is an atomic in-memory update — no order gap.
+        if isinstance(self._gw, PaperFuturesGateway):
+            self._gw.update_sl_price(update.position_id, update.new_stop_price, update.old_sl_order_id)
+            return
+
+        # Live: place the NEW stop BEFORE cancelling the old one, so the position is
+        # never left unprotected if placement fails (F5). The qty must come from the
+        # live position — not be assumed 0, which previously skipped placement and left
+        # the position with no stop after the first trail move. Worst case is a brief
+        # double-stop; both are reduce-only so the second no-ops once flat.
         sl_side = OrderSide.SELL if pos.side == Side.LONG else OrderSide.BUY
         pos_side = PositionSide.LONG if pos.side == Side.LONG else PositionSide.SHORT
-
         try:
-            # read qty from paper gateway or assume constant
-            qty = Decimal("0")
-            if isinstance(self._gw, PaperFuturesGateway):
-                paper_pos = self._gw._positions.get(update.position_id)
-                qty = Decimal(paper_pos.qty) if paper_pos else Decimal("0")
-
-            if qty > 0:
-                new_sl = await self._gw.place_order(
-                    symbol=sym,
-                    side=sl_side,
-                    position_side=pos_side,
-                    order_type=OrderType.STOP_MARKET,
-                    qty=qty,
-                    stop_price=update.new_stop_price,
-                    reduce_only=True,
-                )
-                self._trail.update_sl_order_id(update.position_id, new_sl.id)
-                logger.info(
-                    "order_manager.sl_amended",
-                    position_id=update.position_id,
-                    old_stop=str(update.old_stop_price),
-                    new_stop=str(update.new_stop_price),
-                )
+            position = await self._gw.get_position(sym)
+            qty = position.qty if position else Decimal("0")
+            if qty <= 0:
+                return
+            new_sl = await self._gw.place_order(
+                symbol=sym, side=sl_side, position_side=pos_side,
+                order_type=OrderType.STOP_MARKET, qty=qty,
+                stop_price=update.new_stop_price, reduce_only=True,
+            )
         except Exception as exc:
-            logger.error("order_manager.amend_sl_failed", error=str(exc))
+            # placement failed → KEEP the old SL (never cancel) so the position stays protected
+            logger.error("order_manager.amend_sl_place_failed_keeping_old", error=str(exc))
+            return
+
+        # new stop is live → now safe to retire the old one
+        try:
+            await self._gw.cancel_order(sym, update.old_sl_order_id)
+        except Exception as exc:
+            logger.warning("order_manager.cancel_old_sl_failed", error=str(exc))
+        self._trail.update_sl_order_id(update.position_id, new_sl.id)
+        logger.info(
+            "order_manager.sl_amended",
+            position_id=update.position_id,
+            old_stop=str(update.old_stop_price),
+            new_stop=str(update.new_stop_price),
+        )
 
     # ------------------------------------------------------------------
     # Time stop — market close (winner-asymmetry "cut losers short")
