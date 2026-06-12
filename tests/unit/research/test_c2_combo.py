@@ -305,3 +305,82 @@ def test_exit_alpha_trailing_beats_fixed_on_a_crash_entry():
     # the trailing exit caps the loss near -2%, fixed eats the full drawdown
     assert float(trail.worst_trade) > float(fixed.worst_trade)
     assert float(trail.worst_trade) == pytest.approx(-0.02 - CostParams().round_trip, abs=1e-9)
+
+
+# --------------------------------------------------------------------------
+# intrabar look-ahead pessimism (§2.4) — same-bar +1% high must NOT rescue a
+# bar that also pierced the -2% stop
+# --------------------------------------------------------------------------
+
+def test_intrabar_same_bar_high_does_not_arm_breakeven_before_stop():
+    """The entry bar's high reaches +1% (breakeven trigger) AND its low pierces
+    -2% (stop). Intrabar order is unknowable, so the harness must assume the
+    adverse move first and exit at the -2% stop — never optimistically at
+    breakeven. Optimism here would manufacture exit-alpha out of nothing."""
+    m = make_market(
+        opens=[100, 100, 100], highs=[100, 101, 100],   # bar1 high 101 = +1% BE trigger
+        lows=[100, 98, 98], closes=[100, 99, 98],          # bar1 low 98 = -2% stop
+        oi=[100, 100, 100], buy=[1, 1, 1], sell=[1, 1, 1],
+    )
+    cost = CostParams()
+    t = cc._simulate_one(m, entry_idx=1, exit_p=ExitParams(), cost=cost, mode=ExitMode.TRAILING_1491)
+    assert t.exit_reason == "stop_loss"  # NOT "breakeven"
+    assert float(t.return_pct) == pytest.approx(-0.02 - cost.round_trip, abs=1e-9)
+
+
+# --------------------------------------------------------------------------
+# exit-alpha isolation (R5): both modes must score the IDENTICAL entry set
+# --------------------------------------------------------------------------
+
+def test_run_comparison_scores_identical_entry_set_across_modes():
+    """Eight consecutive capitulation signals. With the old no-overlap-by-
+    realised-exit logic the two modes entered a DIFFERENT number of times (fast
+    -2% trailing stops free up re-entry; long fixed holds suppress it), so the
+    'exit alpha' diff compared mismatched samples. run_comparison must now score
+    BOTH modes on the same entries → equal n_trades."""
+    n = 10
+    oi = [100.0] + [100.0 - i for i in range(1, n)]  # strictly dropping → cap each bar
+    lows = [100.0] + [97.0] * (n - 1)                # bar1+ dips -3% → trailing stops fast
+    m = make_market(
+        opens=[100.0] * n, highs=[100.0] * n, lows=lows, closes=[100.0] * n,
+        oi=oi, buy=[1.0] * n, sell=[1.0] + [2.0] * (n - 1),
+    )
+    res = cc.run_comparison(
+        m, regime_p=RegimeParams(require="off"),
+        exit_p=ExitParams(fixed_hold_bars=5, max_hold_bars=5),
+    )
+    fixed = res[ExitMode.FIXED_HOLD.value]
+    trail = res[ExitMode.TRAILING_1491.value]
+    assert fixed.n_trades == trail.n_trades   # identical entry set (R5 isolation)
+    assert fixed.n_trades == 8                 # signals i=1..8 → entries at bars 2..9
+
+
+def test_entry_signal_indices_are_one_bar_past_each_signal():
+    m = make_market(
+        opens=[100] * 5, highs=[100] * 5, lows=[100] * 5, closes=[100] * 5,
+        oi=[100, 99, 99, 98, 98], buy=[1] * 5, sell=[1, 2, 1, 2, 1],
+    )
+    # cap at i=1 (oi -1%, taker .5) and i=3 (oi -1.01%, taker .5); i=2,4 flat oi
+    idx = cc.entry_signal_indices(m, regime_p=RegimeParams(require="off"))
+    assert idx == [2, 4]  # entry is one bar past each signal (look-ahead safe)
+
+
+# --------------------------------------------------------------------------
+# data-integrity invariants — alignment safety (§2.4)
+# --------------------------------------------------------------------------
+
+def test_marketarrays_rejects_nonmonotonic_or_duplicate_ts():
+    ones = np.ones(3)
+    common = dict(open=ones, high=ones, low=ones, close=ones,
+                  oi=ones, taker_buy=ones, taker_sell=ones)
+    with pytest.raises(ValueError, match="strictly increasing"):
+        MarketArrays(ts=np.array([1.0, 3.0, 2.0]), **common)   # unordered
+    with pytest.raises(ValueError, match="strictly increasing"):
+        MarketArrays(ts=np.array([1.0, 2.0, 2.0]), **common)   # duplicate
+
+
+def test_normalize_ts_seconds_detects_ms_and_passes_seconds_through():
+    sec = np.array([1_700_000_000.0, 1_700_000_300.0])
+    assert np.array_equal(cc.normalize_ts_seconds(sec), sec)   # second-scale untouched
+    assert np.allclose(cc.normalize_ts_seconds(sec * 1000.0), sec)  # ms → seconds
+    assert cc.normalize_ts_seconds(np.array([])).size == 0     # empty is safe

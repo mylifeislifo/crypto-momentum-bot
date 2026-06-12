@@ -20,7 +20,15 @@ LOOK-AHEAD SAFETY (signal-validation §2.4) — enforced and unit-tested:
     confirmed at the close of T.
   - the regime intensity threshold is a TRAILING quantile over strictly-past
     bars; never the full-sample distribution.
-  - exit simulation walks forward using only each bar's own OHLC.
+  - exit simulation walks forward using only each bar's own OHLC, and within a
+    single bar the stop is resolved BEFORE that same bar's high can arm
+    breakeven (pessimistic intrabar ordering — no optimistic same-bar escape).
+  - timestamps are forced strictly-increasing on construction, so an unordered
+    or duplicated merge can never silently reorder the forward walk.
+
+EXIT-ALPHA ISOLATION (R5): run_comparison computes the entry set ONCE, exit-mode
+independent, and scores both exit modes on those identical entries — so the mean
+difference is purely the exit rule, not a different (overlap-driven) sample.
 
 NUMERIC POLICY (trading §1.2 / §7.1):
   - prices flow as float in the numpy hot path (§7.1 carve-out);
@@ -114,6 +122,12 @@ class MarketArrays:
         for name in ("open", "high", "low", "close", "oi", "taker_buy", "taker_sell"):
             if len(getattr(self, name)) != n:
                 raise ValueError(f"array length mismatch: {name}")
+        if n >= 2 and not np.all(np.diff(np.asarray(self.ts, dtype=float)) > 0):
+            raise ValueError(
+                "ts must be strictly increasing — duplicate or unordered bars "
+                "silently corrupt the forward walk / oi_delta and break look-ahead "
+                "safety. Sort and de-duplicate the source (signal-validation §2.4)."
+            )
 
 
 # ============================================================================
@@ -135,6 +149,22 @@ def taker_ratio(buy: np.ndarray, sell: np.ndarray) -> np.ndarray:
     with np.errstate(divide="ignore", invalid="ignore"):
         r = buy / np.where(sell == 0, np.nan, sell)
     return r
+
+
+def normalize_ts_seconds(ts: np.ndarray) -> np.ndarray:
+    """Coerce a timestamp array to unix SECONDS (idempotent for second-scale
+    input).
+
+    Binance S3 dumps (the `--data-dir` path) carry millisecond timestamps, while
+    the REST and demo paths produce seconds. Anything whose max exceeds ~1e11
+    (≈ year 5138 in seconds) can only be milliseconds, so it is divided by 1000.
+    Without this, `count_independent_episodes` (which multiplies gap_days by
+    86400 *seconds*) and any cross-source merge would misbehave — a silent
+    alignment bug (signal-validation §2.4)."""
+    ts = np.asarray(ts, dtype=float)
+    if ts.size and np.nanmax(ts) > 1e11:
+        return ts / 1000.0
+    return ts
 
 
 def trailing_quantile(
@@ -246,9 +276,11 @@ def _simulate_one(
     horizon = min(entry_idx + exit_p.max_hold_bars, n - 1)
 
     for j in range(entry_idx, horizon + 1):
-        # arm breakeven once the bar's high reaches +1%
-        if not be_armed and float(m.high[j]) >= be_level:
-            be_armed = True
+        # The stop level for THIS bar reflects only what PRIOR bars confirmed.
+        # Breakeven is armed at the END of the loop body (below), never on the
+        # same bar whose high first reaches +1% — otherwise a bar that both
+        # spikes +1% and craters to the stop would optimistically exit at
+        # breakeven, fabricating exit-alpha from intrabar path ambiguity (§2.4).
         stop = entry_price if be_armed else init_stop
 
         # gap-through: a later bar opening BELOW the stop fills at the open
@@ -259,12 +291,17 @@ def _simulate_one(
             gross = (exit_price - entry_price) / entry_price
             return _mk_trade(m, entry_idx, j, entry_price, exit_price, gross - rt, reason)
 
-        # intrabar stop hit
+        # intrabar stop hit (pessimistic: the adverse excursion is assumed to
+        # come before any same-bar high that would have armed breakeven)
         if float(m.low[j]) <= stop:
             exit_price = stop
             reason = "stop_loss" if not be_armed else "breakeven"
             gross = (exit_price - entry_price) / entry_price
             return _mk_trade(m, entry_idx, j, entry_price, exit_price, gross - rt, reason)
+
+        # only now may this bar's high arm breakeven for SUBSEQUENT bars
+        if not be_armed and float(m.high[j]) >= be_level:
+            be_armed = True
 
     # never stopped → exit at the close of the max-hold bar
     exit_price = float(m.close[horizon])
@@ -312,21 +349,20 @@ def _regime_ok(
     return n1_pass or n2_pass  # "any"
 
 
-def scan_and_simulate(
+def entry_signal_indices(
     m: MarketArrays,
-    mode: ExitMode,
     *,
     entry_p: EntryParams = EntryParams(),
-    exit_p: ExitParams = ExitParams(),
     regime_p: RegimeParams = RegimeParams(),
-    cost: CostParams = CostParams(),
     systemic_count: Optional[np.ndarray] = None,
-) -> list[Trade]:
-    """Scan for C-2 signals, apply the regime gate, simulate one position at a
-    time (no overlap), and return realised trades.
+) -> list[int]:
+    """The bars at which a position is ENTERED (i.e. one bar past each C-2 signal
+    that also clears the regime gate). A signal at bar T enters at the OPEN of
+    T+1, so this returns the T+1 entry bars (look-ahead safe, §2.4).
 
-    A signal at bar T enters at the OPEN of bar T+1 (look-ahead safe). While a
-    position is open, new signals are ignored.
+    No trade is simulated here, so the list is EXIT-MODE INDEPENDENT — the basis
+    for a clean exit-alpha comparison (run_comparison runs both exit modes over
+    this identical list).
     """
     n = len(m.ts)
     oi_d = oi_delta_pct(m.oi)
@@ -345,20 +381,45 @@ def scan_and_simulate(
     if systemic_count is None:
         systemic_count = np.zeros(n, dtype=int)
 
+    entries: list[int] = []
+    for i in range(n - 1):  # need an i+1 bar to enter on
+        if not cap[i]:
+            continue
+        n1_pass = (not math.isnan(intensity_threshold[i])) and (oi_d[i] <= intensity_threshold[i])
+        n2_pass = systemic_count[i] >= regime_p.min_systemic_symbols
+        if _regime_ok(regime_p, n1_pass, n2_pass):
+            entries.append(i + 1)
+    return entries
+
+
+def scan_and_simulate(
+    m: MarketArrays,
+    mode: ExitMode,
+    *,
+    entry_p: EntryParams = EntryParams(),
+    exit_p: ExitParams = ExitParams(),
+    regime_p: RegimeParams = RegimeParams(),
+    cost: CostParams = CostParams(),
+    systemic_count: Optional[np.ndarray] = None,
+) -> list[Trade]:
+    """Live-like SINGLE-mode run: at most one position open at a time, so a
+    signal that fires while a position is open is skipped.
+
+    Because the skip depends on when THIS mode's exit lands, the realised trade
+    COUNT differs across exit modes — do NOT diff two scan_and_simulate runs to
+    estimate exit-alpha; use run_comparison (identical entries) for that.
+    """
+    entries = entry_signal_indices(
+        m, entry_p=entry_p, regime_p=regime_p, systemic_count=systemic_count,
+    )
     trades: list[Trade] = []
-    i = 0
-    while i < n - 1:  # need an i+1 bar to enter on
-        if cap[i]:
-            n1_pass = (not math.isnan(intensity_threshold[i])) and (oi_d[i] <= intensity_threshold[i])
-            n2_pass = systemic_count[i] >= regime_p.min_systemic_symbols
-            if _regime_ok(regime_p, n1_pass, n2_pass):
-                trade = _simulate_one(m, i + 1, exit_p, cost, mode)
-                trades.append(trade)
-                # resume scanning after the trade closes (no overlapping positions)
-                exit_i = _index_of_ts(m.ts, trade.exit_ts)
-                i = max(i + 1, exit_i) + 1
-                continue
-        i += 1
+    block_until = -1  # last bar index occupied by an open position
+    for entry_idx in entries:
+        if entry_idx <= block_until:
+            continue  # still in a position → no overlap
+        trade = _simulate_one(m, entry_idx, exit_p, cost, mode)
+        trades.append(trade)
+        block_until = _index_of_ts(m.ts, trade.exit_ts)
     return trades
 
 
@@ -480,6 +541,24 @@ def summarise(trades: list[Trade], mode: ExitMode) -> BacktestResult:
     )
 
 
+def simulate_entries(
+    m: MarketArrays,
+    entry_indices: list[int],
+    mode: ExitMode,
+    *,
+    exit_p: ExitParams = ExitParams(),
+    cost: CostParams = CostParams(),
+) -> list[Trade]:
+    """Simulate each pre-computed entry independently under one exit mode.
+
+    Overlap is allowed by design: this powers the identical-entries exit-alpha
+    comparison, where the per-trade exit effect — not a capital-constrained
+    equity curve — is the quantity being isolated. Correlation between
+    overlapping trades is handled downstream by the block bootstrap and the
+    independent-episode count (signal-validation §2.2)."""
+    return [_simulate_one(m, ei, exit_p, cost, mode) for ei in entry_indices]
+
+
 def run_comparison(
     m: MarketArrays,
     *,
@@ -489,17 +568,21 @@ def run_comparison(
     cost: CostParams = CostParams(),
     systemic_count: Optional[np.ndarray] = None,
 ) -> dict[str, BacktestResult]:
-    """Run BOTH exit modes on the SAME entries → isolates the 'exit alpha' (R5).
+    """Run BOTH exit modes on the EXACT SAME entries → isolates the exit alpha
+    (R5).
 
-    The only difference between the two results is the exit rule, so
-    (trailing_1491.mean - fixed_hold.mean) is the marginal contribution of the
-    1491 exit discipline on identical C-2 entries.
+    The entry set is computed ONCE (exit-mode independent, via
+    entry_signal_indices), so n_trades is identical across modes and
+    (trailing_1491.mean - fixed_hold.mean) is purely the 1491 exit rule's
+    marginal effect on those identical C-2 entries — not a different,
+    overlap-driven sample. (Contrast scan_and_simulate, whose no-overlap trade
+    count is itself a function of the exit mode.)
     """
+    entries = entry_signal_indices(
+        m, entry_p=entry_p, regime_p=regime_p, systemic_count=systemic_count,
+    )
     out: dict[str, BacktestResult] = {}
     for mode in (ExitMode.FIXED_HOLD, ExitMode.TRAILING_1491):
-        trades = scan_and_simulate(
-            m, mode, entry_p=entry_p, exit_p=exit_p,
-            regime_p=regime_p, cost=cost, systemic_count=systemic_count,
-        )
+        trades = simulate_entries(m, entries, mode, exit_p=exit_p, cost=cost)
         out[mode.value] = summarise(trades, mode)
     return out
