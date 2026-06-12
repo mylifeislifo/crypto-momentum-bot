@@ -60,7 +60,6 @@ class OrderManager:
         self._notify_queue = notify_queue
         self._cfg = config
         self._last_equity_check = 0.0
-        self._latest_atr: Decimal = Decimal("0")
 
     async def run(
         self,
@@ -105,7 +104,6 @@ class OrderManager:
                 while not trail_bar_queue.empty():
                     try:
                         bar = trail_bar_queue.get_nowait()
-                        self._latest_atr = bar.cvd_delta  # use bar object for ATR update
                         updates = self._trail.on_new_bar(bar)
                         for update in updates:
                             await self._amend_sl(update)
@@ -211,14 +209,18 @@ class OrderManager:
                 sl_order_id=sl_order.id,
             )
 
-        # 7. Register trail
+        # 7. Register trail (seed ATR from the trail's own 5m bar history; fall back
+        #    to 0.5% of entry before any bar has been seen)
+        seed_atr = self._trail.current_atr()
+        if seed_atr <= 0:
+            seed_atr = signal.entry_price_est * Decimal("0.005")
         self._trail.register(
             position_id=position_id,
             side=signal.side,
             sl_order_id=sl_order.id,
             initial_stop=signal.stop_price,
             entry_price=signal.entry_price_est,
-            atr=self._latest_atr if self._latest_atr > 0 else signal.entry_price_est * Decimal("0.005"),
+            atr=seed_atr,
         )
 
         # 8. Guard tracking
@@ -392,7 +394,12 @@ class OrderManager:
         logger.critical("order_manager.circuit_breaker", pnl=cb.daily_pnl_pct, reset_at=cb.reset_at.isoformat())
 
         try:
-            await self._gw.close_all_positions(sym)
+            fills = await self._gw.close_all_positions(sym)
+            # reconcile the guard's open-position count, else it stays inflated and
+            # blocks every future entry with "Max positions" (the count survives the
+            # daily reset, which preserves it across days)
+            for fill in fills:
+                self._guard.on_trade_closed(fill.side)
         except Exception as exc:
             logger.error("order_manager.cb_close_failed", error=str(exc))
 

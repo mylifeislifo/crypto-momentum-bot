@@ -64,6 +64,16 @@ class TestComputeAtr:
         assert compute_atr([]) == Decimal("0")
 
 
+def test_current_atr_reflects_bar_history():
+    # F3: the ATR used to seed a new position must come from real price range
+    mgr = _manager(multiplier=1.5)
+    assert mgr.current_atr() == Decimal("0")            # no bars yet
+    mgr.on_new_bar(_bar(high=100, low=90, close=95))    # 1 bar → still 0 (needs >=2)
+    assert mgr.current_atr() == Decimal("0")
+    mgr.on_new_bar(_bar(high=105, low=98, close=102))   # 2 bars → real ATR
+    assert mgr.current_atr() > Decimal("0")
+
+
 # ---------------------------------------------------------------------------
 # LONG trailing stop: monotonically increasing
 # ---------------------------------------------------------------------------

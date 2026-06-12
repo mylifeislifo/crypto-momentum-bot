@@ -26,7 +26,6 @@ from bot.execution.paper_futures import PaperFuturesGateway
 from bot.risk.guard import RiskGuard
 from bot.risk.trail import TrailingStopManager
 from bot.strategy.aggregator import run as aggregator_run
-from bot.strategy.base import StrategyContext
 
 _TS = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
 _MID = Decimal("50000")
@@ -195,3 +194,38 @@ async def test_paper_stop_triggered_on_price_cross(tmp_path):
         events.append(notify_q.get_nowait())
     stop_events = [e for e in events if e.event_type.value == "STOP_HIT"]
     assert len(stop_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_reconciles_guard_count(tmp_path):
+    """F2: after the circuit breaker closes all positions, the guard's open-position
+    count must return to 0 — otherwise it stays inflated (surviving the daily reset)
+    and blocks every future entry with 'Max positions'."""
+    from bot.core.clock import next_9am_kst, utc_now
+    from bot.core.enums import PositionSide
+    from bot.core.types import CircuitBreakerState
+
+    config = AppConfig()
+    notify_q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    gw = PaperFuturesGateway(initial_balance=Decimal("10000"), state_file=tmp_path / "paper.json")
+    gw.update_price(_MID)
+    guard = RiskGuard(config.risk, config.exchange)
+    trail = TrailingStopManager(atr_multiplier=config.risk.trail_atr_multiplier)
+    om = OrderManager(gw, guard, trail, notify_q, config)
+
+    for i in range(2):                       # two open positions (gateway + guard count)
+        gw.register_position(
+            position_id=f"p{i}", symbol=config.exchange.symbol, side=Side.LONG,
+            position_side=PositionSide.LONG, qty=Decimal("0.01"), entry_price=_MID,
+            sl_price=Decimal("49100"), sl_order_id=f"sl{i}",
+        )
+        guard.on_trade_opened(Side.LONG)
+    assert guard.open_position_count == 2
+
+    cb = CircuitBreakerState(
+        triggered_at=utc_now(), reset_at=next_9am_kst(), daily_pnl_pct=-0.05, message="CB",
+    )
+    await om._handle_circuit_breaker(cb)
+
+    assert len(gw.active_position_ids) == 0      # all positions closed
+    assert guard.open_position_count == 0        # F2: reconciled (was the latent bug)

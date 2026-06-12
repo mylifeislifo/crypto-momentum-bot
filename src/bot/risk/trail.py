@@ -140,6 +140,12 @@ class TrailingStopManager:
         state = self._positions.get(position_id)
         return state.current_stop if state else None
 
+    def current_atr(self) -> Decimal:
+        """Latest ATR from the 5m bar history (Decimal('0') until >=2 bars seen).
+        Used to seed a NEW position's initial trail offset from real price range
+        rather than a stale/garbage value."""
+        return compute_atr(self._bar_history_5m, self._atr_period)
+
     def active_position_ids(self) -> list[str]:
         return list(self._positions.keys())
 
