@@ -237,3 +237,75 @@ class TestTrailUpdateFields:
         assert u.new_stop_price > initial_stop
         assert u.old_sl_order_id == "sl_1"
         assert u.position_id == "pos1"
+
+
+# ---------------------------------------------------------------------------
+# Breakeven floor (winner-asymmetry, trading §3): once +trigger% in profit the
+# stop never drops below entry — a winner cannot round-trip to a loss.
+# ---------------------------------------------------------------------------
+
+def _be_manager(multiplier: float = 1.5, trigger: float = 0.01, offset: float = 0.0) -> TrailingStopManager:
+    return TrailingStopManager(
+        atr_multiplier=multiplier, atr_period=3,
+        breakeven_trigger_pct=trigger, breakeven_offset_pct=offset,
+    )
+
+
+class TestBreakeven:
+    def test_long_floors_stop_to_entry_when_atr_trail_below_entry(self):
+        # large ATR (600 → offset 900) keeps the pure ATR trail BELOW entry,
+        # isolating the breakeven floor. Single bar → ATR stays the registered 600.
+        mgr = _be_manager(trigger=0.01)
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        updates = mgr.on_new_bar(_bar(high=50500, low=50050, close=50100))  # +1% high
+        assert len(updates) == 1
+        # ATR trail = 50500 - 900 = 49600 (below entry); BE floors it to entry 50000
+        assert updates[0].new_stop_price == Decimal("50000.00")
+
+    def test_long_not_armed_below_trigger(self):
+        mgr = _be_manager(trigger=0.01)
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        updates = mgr.on_new_bar(_bar(high=50200, low=50050, close=50100))  # only +0.4%
+        assert len(updates) == 1
+        # below trigger → no BE floor → pure ATR trail 50200 - 900 = 49300
+        assert updates[0].new_stop_price == Decimal("49300.00")
+
+    def test_long_trail_takes_over_above_breakeven(self):
+        mgr = _be_manager(trigger=0.01)
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        u1 = mgr.on_new_bar(_bar(high=50500, low=50500, close=50500))  # arms BE → floor 50000
+        assert u1[0].new_stop_price == Decimal("50000.00")
+        u2 = mgr.on_new_bar(_bar(high=51000, low=51000, close=51000))  # higher → ATR trail rises
+        assert len(u2) == 1
+        assert u2[0].new_stop_price > Decimal("50000.00")  # trail now sits above breakeven
+
+    def test_short_caps_stop_to_entry(self):
+        mgr = _be_manager(trigger=0.01)
+        mgr.register("p", Side.SHORT, "sl", Decimal("50900"), Decimal("50000"), Decimal("600"))
+        updates = mgr.on_new_bar(_bar(high=49950, low=49500, close=49900))  # -1% low
+        assert len(updates) == 1
+        # ATR trail = 49500 + 900 = 50400 (above entry); BE caps it to entry 50000
+        assert updates[0].new_stop_price == Decimal("50000.00")
+
+    def test_disabled_when_trigger_zero(self):
+        mgr = _be_manager(trigger=0.0)  # breakeven off → legacy pure-ATR behavior
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        updates = mgr.on_new_bar(_bar(high=50500, low=50500, close=50500))
+        assert updates[0].new_stop_price == Decimal("49600.00")  # no floor to entry
+
+    def test_offset_lifts_breakeven_above_entry_to_cover_fees(self):
+        mgr = _be_manager(trigger=0.01, offset=0.001)  # BE floor = entry +0.1%
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        updates = mgr.on_new_bar(_bar(high=50500, low=50050, close=50100))
+        assert len(updates) == 1
+        assert updates[0].new_stop_price == Decimal("50050.00")  # 50000 * 1.001
+
+    def test_breakeven_holds_when_price_pulls_back_to_entry(self):
+        # once armed, a pullback toward entry must NOT lower the stop below breakeven
+        mgr = _be_manager(trigger=0.01)
+        mgr.register("p", Side.LONG, "sl", Decimal("49100"), Decimal("50000"), Decimal("600"))
+        mgr.on_new_bar(_bar(high=50500, low=50500, close=50500))  # arms BE → floor 50000
+        assert mgr.get_current_stop("p") == Decimal("50000.00")
+        updates = mgr.on_new_bar(_bar(high=50000, low=49900, close=49950))  # falls back
+        assert updates == []                                  # no lowering emitted
+        assert mgr.get_current_stop("p") == Decimal("50000.00")  # held at breakeven

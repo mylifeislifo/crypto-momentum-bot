@@ -35,6 +35,8 @@ risk:
   short_sl_pct: -0.0075
   trail_atr_multiplier: 1.5
   trail_lookback_bars: 5
+  breakeven_trigger_pct: 0.01    # +1% favorable → stop ratchets to (net) breakeven (winner-asymmetry)
+  breakeven_offset_pct: 0.0012   # ~round-trip taker+slippage → BE stop nets ≈0, not a fee-sized loss
   daily_loss_limit: -0.03
   circuit_reset_hour_kst: 9
   long_bias_window: 20

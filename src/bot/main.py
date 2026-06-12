@@ -92,6 +92,8 @@ async def main(config_path: str = "config/default.yaml", override_path: Optional
     trail = TrailingStopManager(
         atr_multiplier=config.risk.trail_atr_multiplier,
         atr_period=config.risk.trail_lookback_bars,
+        breakeven_trigger_pct=config.risk.breakeven_trigger_pct,
+        breakeven_offset_pct=config.risk.breakeven_offset_pct,
     )
     bar_builder = BarBuilder(intervals=[Interval.M5, Interval.M15])
     order_mgr = OrderManager(gateway, guard, trail, notify_queue, config)

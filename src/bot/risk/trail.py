@@ -7,6 +7,13 @@ Trail logic:
   LONG : trail_stop = peak_high − ATR × multiplier  (monotonically increases)
   SHORT: trail_stop = trough_low + ATR × multiplier  (monotonically decreases)
 
+Breakeven floor (winner-asymmetry, trading §3):
+  Once price moves +breakeven_trigger_pct in the favorable direction, the stop
+  is never allowed below entry again (LONG) / above entry (SHORT). A winner can
+  therefore not round-trip into a loss — the exit-side embodiment of "alpha is
+  in the exit" (R5). The ATR trail still takes over once it rises past the
+  breakeven level. Disabled when breakeven_trigger_pct == 0.
+
 The trail manager ONLY raises/lowers the stop. The actual SL order amendment
 is handled by execution/order_manager.py, which receives TrailUpdate objects
 from on_new_bar().
@@ -48,12 +55,22 @@ class TrailState:
     current_stop: Decimal
     peak_price: Decimal     # LONG: highest high seen; SHORT: lowest low seen
     atr: Decimal
+    entry_price: Decimal
+    be_armed: bool = False  # True once the +trigger% breakeven floor has engaged
 
 
 class TrailingStopManager:
-    def __init__(self, atr_multiplier: float, atr_period: int = 5) -> None:
+    def __init__(
+        self,
+        atr_multiplier: float,
+        atr_period: int = 5,
+        breakeven_trigger_pct: float = 0.0,
+        breakeven_offset_pct: float = 0.0,
+    ) -> None:
         self._multiplier = Decimal(str(atr_multiplier))
         self._atr_period = atr_period
+        self._be_trigger = Decimal(str(breakeven_trigger_pct))   # 0 disables breakeven
+        self._be_offset = Decimal(str(breakeven_offset_pct))
         self._positions: dict[str, TrailState] = {}
         self._bar_history_5m: list[Bar] = []
 
@@ -75,6 +92,7 @@ class TrailingStopManager:
             current_stop=initial_stop,
             peak_price=entry_price,
             atr=effective_atr,
+            entry_price=entry_price,
         )
         logger.info(
             "trail.registered",
@@ -127,6 +145,17 @@ class TrailingStopManager:
 
             new_stop = (state.peak_price - trail_offset).quantize(Decimal("0.01"))
 
+            # breakeven floor: once +trigger% in profit, the stop never drops below
+            # entry again — a winner cannot round-trip to a loss (winner-asymmetry).
+            if self._be_trigger > 0:
+                self._maybe_arm_breakeven(state)
+                if state.be_armed:
+                    be_floor = (
+                        state.entry_price * (Decimal("1") + self._be_offset)
+                    ).quantize(Decimal("0.01"))
+                    if be_floor > new_stop:
+                        new_stop = be_floor
+
             # monotonically increasing: never lower the stop for a long
             if new_stop > state.current_stop:
                 return self._emit_update(state, new_stop)
@@ -137,11 +166,44 @@ class TrailingStopManager:
 
             new_stop = (state.peak_price + trail_offset).quantize(Decimal("0.01"))
 
+            # breakeven ceiling (mirror of the long floor)
+            if self._be_trigger > 0:
+                self._maybe_arm_breakeven(state)
+                if state.be_armed:
+                    be_ceil = (
+                        state.entry_price * (Decimal("1") - self._be_offset)
+                    ).quantize(Decimal("0.01"))
+                    if be_ceil < new_stop:
+                        new_stop = be_ceil
+
             # monotonically decreasing: never raise the stop for a short
             if new_stop < state.current_stop:
                 return self._emit_update(state, new_stop)
 
         return None
+
+    def _maybe_arm_breakeven(self, state: TrailState) -> None:
+        """Arm the breakeven floor the first time peak excursion reaches +trigger%.
+
+        Uses peak_price (max favorable excursion), so arming is based only on the
+        best price seen so far — once a real +trigger% move printed, the resting
+        stop is moved to (around) entry. No look-ahead: in live trading the
+        exchange SL fills on the subsequent adverse move, not this bar."""
+        if state.be_armed:
+            return
+        if state.side == Side.LONG:
+            reached = state.peak_price >= state.entry_price * (Decimal("1") + self._be_trigger)
+        else:
+            reached = state.peak_price <= state.entry_price * (Decimal("1") - self._be_trigger)
+        if reached:
+            state.be_armed = True
+            logger.info(
+                "trail.breakeven_armed",
+                position_id=state.position_id,
+                side=state.side.value,
+                entry=str(state.entry_price),
+                peak=str(state.peak_price),
+            )
 
     @staticmethod
     def _emit_update(state: TrailState, new_stop: Decimal) -> TrailUpdate:
