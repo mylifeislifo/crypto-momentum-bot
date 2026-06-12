@@ -13,6 +13,7 @@ Lifecycle per signal:
 
 On each new 5m bar (from trail_bar_queue):
   → trail_manager.on_new_bar() → amend server-side SL if stop moved
+  → trail_manager.due_time_exits() → market-close unproven positions (time stop)
 
 On each OB snapshot (paper mode):
   → check if mid_price crossed any SL → close + EXIT notification
@@ -23,7 +24,6 @@ Circuit breaker:
 """
 
 import asyncio
-import uuid
 from decimal import Decimal
 from typing import Optional
 
@@ -32,7 +32,7 @@ import structlog
 from ..config.schema import AppConfig
 from ..core.clock import utc_now
 from ..core.enums import NotifyEventType, OrderSide, OrderType, PositionSide, Side
-from ..core.types import CircuitBreakerState, NotifyEvent, Signal, TrailUpdate
+from ..core.types import CircuitBreakerState, ForcedExit, NotifyEvent, Signal, TrailUpdate
 from ..risk.guard import RiskGuard
 from ..risk.sizer import compute_qty
 from ..risk.trail import TrailingStopManager
@@ -60,7 +60,6 @@ class OrderManager:
         self._notify_queue = notify_queue
         self._cfg = config
         self._last_equity_check = 0.0
-        self._latest_atr: Decimal = Decimal("0")
 
     async def run(
         self,
@@ -105,10 +104,12 @@ class OrderManager:
                 while not trail_bar_queue.empty():
                     try:
                         bar = trail_bar_queue.get_nowait()
-                        self._latest_atr = bar.cvd_delta  # use bar object for ATR update
                         updates = self._trail.on_new_bar(bar)
                         for update in updates:
                             await self._amend_sl(update)
+                        # time stop: cut unproven positions / hard-cap (winner-asymmetry)
+                        for forced_exit in self._trail.due_time_exits():
+                            await self._force_close(forced_exit)
                     except asyncio.QueueEmpty:
                         break
 
@@ -208,14 +209,18 @@ class OrderManager:
                 sl_order_id=sl_order.id,
             )
 
-        # 7. Register trail
+        # 7. Register trail (seed ATR from the trail's own 5m bar history; fall back
+        #    to 0.5% of entry before any bar has been seen)
+        seed_atr = self._trail.current_atr()
+        if seed_atr <= 0:
+            seed_atr = signal.entry_price_est * Decimal("0.005")
         self._trail.register(
             position_id=position_id,
             side=signal.side,
             sl_order_id=sl_order.id,
             initial_stop=signal.stop_price,
             entry_price=signal.entry_price_est,
-            atr=self._latest_atr if self._latest_atr > 0 else signal.entry_price_est * Decimal("0.005"),
+            atr=seed_atr,
         )
 
         # 8. Guard tracking
@@ -292,6 +297,66 @@ class OrderManager:
             logger.error("order_manager.amend_sl_failed", error=str(exc))
 
     # ------------------------------------------------------------------
+    # Time stop — market close (winner-asymmetry "cut losers short")
+    # ------------------------------------------------------------------
+
+    async def _force_close(self, fx: ForcedExit) -> None:
+        """Market-close a position the time stop flagged. Distinct from a price
+        stop: this is a non-price, time-based forced exit (reduce-only market)."""
+        sym = self._cfg.exchange.symbol
+
+        if isinstance(self._gw, PaperFuturesGateway):
+            fill = self._gw.close_position(fx.position_id)
+            if fill:                                    # None if already closed (e.g. SL beat us)
+                self._trail.on_close(fx.position_id)
+                self._guard.on_trade_closed(fill.side)
+                logger.info(
+                    "order_manager.time_stop_closed",
+                    position_id=fx.position_id, reason=fx.reason, bars_held=fx.bars_held,
+                )
+                await self._notify(
+                    NotifyEventType.EXIT,
+                    f"⏱ 시간청산 ({fx.reason}) {sym}\n"
+                    f"방향: {fill.side.value}\n"
+                    f"청산가: ${fill.avg_price:,.2f}\n"
+                    f"보유: {fx.bars_held} bars (5m)",
+                )
+            return
+
+        # live: reduce-only market close + cancel the resting SL
+        try:
+            gw_pos = await self._gw.get_position(sym)
+            if gw_pos is None or gw_pos.qty <= 0:
+                self._trail.on_close(fx.position_id)     # already flat
+                return
+            close_side = OrderSide.SELL if fx.side == Side.LONG else OrderSide.BUY
+            pos_side = PositionSide.LONG if fx.side == Side.LONG else PositionSide.SHORT
+            await self._gw.place_order(
+                symbol=sym, side=close_side, position_side=pos_side,
+                order_type=OrderType.MARKET, qty=gw_pos.qty, reduce_only=True,
+            )
+            state = self._trail._positions.get(fx.position_id)
+            if state is not None:
+                try:
+                    await self._gw.cancel_order(sym, state.sl_order_id)
+                except Exception as exc:
+                    logger.warning("order_manager.time_stop_cancel_sl_failed", error=str(exc))
+            self._trail.on_close(fx.position_id)
+            self._guard.on_trade_closed(fx.side)
+            logger.info(
+                "order_manager.time_stop_closed",
+                position_id=fx.position_id, reason=fx.reason, bars_held=fx.bars_held,
+            )
+            await self._notify(
+                NotifyEventType.EXIT,
+                f"⏱ 시간청산 ({fx.reason}) {sym}\n방향: {fx.side.value}\n보유: {fx.bars_held} bars (5m)",
+            )
+        except Exception as exc:
+            logger.error(
+                "order_manager.force_close_failed", error=str(exc), position_id=fx.position_id
+            )
+
+    # ------------------------------------------------------------------
     # Paper stop monitoring
     # ------------------------------------------------------------------
 
@@ -329,7 +394,12 @@ class OrderManager:
         logger.critical("order_manager.circuit_breaker", pnl=cb.daily_pnl_pct, reset_at=cb.reset_at.isoformat())
 
         try:
-            await self._gw.close_all_positions(sym)
+            fills = await self._gw.close_all_positions(sym)
+            # reconcile the guard's open-position count, else it stays inflated and
+            # blocks every future entry with "Max positions" (the count survives the
+            # daily reset, which preserves it across days)
+            for fill in fills:
+                self._guard.on_trade_closed(fill.side)
         except Exception as exc:
             logger.error("order_manager.cb_close_failed", error=str(exc))
 

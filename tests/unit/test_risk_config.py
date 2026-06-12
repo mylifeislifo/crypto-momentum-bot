@@ -40,3 +40,41 @@ def test_disabled_breakeven_ignores_offset():
 def test_negative_breakeven_rejected():
     with pytest.raises(ValueError):
         RiskCfg(breakeven_trigger_pct=-0.01)
+
+
+# --- time stop ---
+
+def test_time_stop_defaults_disabled_in_schema():
+    cfg = RiskCfg()                       # default.yaml enables (48); schema default off
+    assert cfg.time_stop_bars == 0
+    assert cfg.max_hold_bars == 0
+
+
+def test_negative_time_stop_rejected():
+    with pytest.raises(ValueError):
+        RiskCfg(time_stop_bars=-1)
+    with pytest.raises(ValueError):
+        RiskCfg(max_hold_bars=-5)
+
+
+def test_max_hold_below_time_stop_rejected():
+    with pytest.raises(ValueError, match="max_hold_bars must be >= time_stop_bars"):
+        RiskCfg(time_stop_bars=48, max_hold_bars=10)
+
+
+def test_time_stop_config_valid_combos():
+    assert RiskCfg(time_stop_bars=48, max_hold_bars=0).time_stop_bars == 48   # cap disabled ok
+    assert RiskCfg(time_stop_bars=48, max_hold_bars=576).max_hold_bars == 576  # cap above ok
+
+
+def test_time_stop_requires_breakeven_enabled():
+    # the proven-winner exemption needs breakeven; without it the time stop would
+    # cut winners too. Disallowed — steer the user to max_hold_bars instead.
+    with pytest.raises(ValueError, match="time_stop_bars requires breakeven"):
+        RiskCfg(time_stop_bars=48, breakeven_trigger_pct=0.0)
+
+
+def test_max_hold_allowed_without_breakeven():
+    # an unconditional hard cap cuts everyone regardless of proof → no breakeven needed
+    cfg = RiskCfg(time_stop_bars=0, max_hold_bars=100, breakeven_trigger_pct=0.0)
+    assert cfg.max_hold_bars == 100

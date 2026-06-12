@@ -26,7 +26,7 @@ from typing import Optional
 
 from ..core.clock import utc_now
 from ..core.enums import Interval, Side
-from ..core.types import Bar, TrailUpdate
+from ..core.types import Bar, ForcedExit, TrailUpdate
 
 logger = structlog.get_logger(__name__)
 
@@ -57,6 +57,7 @@ class TrailState:
     atr: Decimal
     entry_price: Decimal
     be_armed: bool = False  # True once the +trigger% breakeven floor has engaged
+    bars_held: int = 0      # number of 5m bars since entry (for the time stop)
 
 
 class TrailingStopManager:
@@ -66,11 +67,15 @@ class TrailingStopManager:
         atr_period: int = 5,
         breakeven_trigger_pct: float = 0.0,
         breakeven_offset_pct: float = 0.0,
+        time_stop_bars: int = 0,
+        max_hold_bars: int = 0,
     ) -> None:
         self._multiplier = Decimal(str(atr_multiplier))
         self._atr_period = atr_period
         self._be_trigger = Decimal(str(breakeven_trigger_pct))   # 0 disables breakeven
         self._be_offset = Decimal(str(breakeven_offset_pct))
+        self._time_stop_bars = time_stop_bars   # 0 disables conditional time stop
+        self._max_hold_bars = max_hold_bars     # 0 disables hard cap
         self._positions: dict[str, TrailState] = {}
         self._bar_history_5m: list[Bar] = []
 
@@ -110,8 +115,10 @@ class TrailingStopManager:
                 self._bar_history_5m = self._bar_history_5m[-50:]
 
             new_atr = compute_atr(self._bar_history_5m, self._atr_period)
-            if new_atr > 0:
-                for state in self._positions.values():
+            # one 5m bar elapsed → age every open position (drives the time stop)
+            for state in self._positions.values():
+                state.bars_held += 1
+                if new_atr > 0:
                     state.atr = new_atr
 
         updates: list[TrailUpdate] = []
@@ -133,8 +140,48 @@ class TrailingStopManager:
         state = self._positions.get(position_id)
         return state.current_stop if state else None
 
+    def current_atr(self) -> Decimal:
+        """Latest ATR from the 5m bar history (Decimal('0') until >=2 bars seen).
+        Used to seed a NEW position's initial trail offset from real price range
+        rather than a stale/garbage value."""
+        return compute_atr(self._bar_history_5m, self._atr_period)
+
     def active_position_ids(self) -> list[str]:
         return list(self._positions.keys())
+
+    def due_time_exits(self) -> list[ForcedExit]:
+        """Positions the time stop wants market-closed as of the current bar.
+
+        Pure read (no mutation): the caller closes each and calls on_close, which
+        removes it so it is not reported again (and a failed close is retried next
+        bar). Two rules, hard cap first:
+          • max_hold  — any position older than max_hold_bars (hard cap).
+          • time_stop — an UNPROVEN position (breakeven never armed = it never
+            printed +trigger% favorable) older than time_stop_bars. Proven winners
+            (be_armed) are exempt and keep riding the trail — winner-asymmetry.
+        """
+        exits: list[ForcedExit] = []
+        for state in self._positions.values():
+            reason: Optional[str] = None
+            if self._max_hold_bars > 0 and state.bars_held >= self._max_hold_bars:
+                reason = "max_hold"
+            elif (
+                self._time_stop_bars > 0
+                and not state.be_armed
+                and state.bars_held >= self._time_stop_bars
+            ):
+                reason = "time_stop"
+            if reason is not None:
+                exits.append(
+                    ForcedExit(
+                        position_id=state.position_id,
+                        side=state.side,
+                        reason=reason,
+                        bars_held=state.bars_held,
+                        ts=utc_now(),
+                    )
+                )
+        return exits
 
     def _tick(self, state: TrailState, bar: Bar) -> Optional[TrailUpdate]:
         trail_offset = state.atr * self._multiplier

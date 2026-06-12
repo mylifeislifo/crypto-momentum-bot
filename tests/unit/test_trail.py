@@ -18,11 +18,12 @@ from bot.risk.trail import TrailingStopManager, compute_atr
 _TS = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
-def _bar(high: float, low: float, close: float, open_: float = None, cvd: float = 0.0) -> Bar:
+def _bar(high: float, low: float, close: float, open_: float = None, cvd: float = 0.0,
+         interval: Interval = Interval.M5) -> Bar:
     o = Decimal(str(open_ if open_ is not None else close))
     return Bar(
         ts=_TS,
-        interval=Interval.M5,
+        interval=interval,
         open=o,
         high=Decimal(str(high)),
         low=Decimal(str(low)),
@@ -61,6 +62,16 @@ class TestComputeAtr:
 
     def test_returns_zero_on_empty(self):
         assert compute_atr([]) == Decimal("0")
+
+
+def test_current_atr_reflects_bar_history():
+    # F3: the ATR used to seed a new position must come from real price range
+    mgr = _manager(multiplier=1.5)
+    assert mgr.current_atr() == Decimal("0")            # no bars yet
+    mgr.on_new_bar(_bar(high=100, low=90, close=95))    # 1 bar → still 0 (needs >=2)
+    assert mgr.current_atr() == Decimal("0")
+    mgr.on_new_bar(_bar(high=105, low=98, close=102))   # 2 bars → real ATR
+    assert mgr.current_atr() > Decimal("0")
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +320,79 @@ class TestBreakeven:
         updates = mgr.on_new_bar(_bar(high=50000, low=49900, close=49950))  # falls back
         assert updates == []                                  # no lowering emitted
         assert mgr.get_current_stop("p") == Decimal("50000.00")  # held at breakeven
+
+
+# ---------------------------------------------------------------------------
+# Time stop (winner-asymmetry "cut losers short"): an UNPROVEN position (never
+# armed breakeven) is flagged for market close after time_stop_bars; proven
+# winners ride on; max_hold_bars is a hard cap for everyone.
+# ---------------------------------------------------------------------------
+
+def _ts_manager(trigger: float = 0.01, time_stop_bars: int = 0, max_hold_bars: int = 0) -> TrailingStopManager:
+    return TrailingStopManager(
+        atr_multiplier=1.5, atr_period=3,
+        breakeven_trigger_pct=trigger,
+        time_stop_bars=time_stop_bars, max_hold_bars=max_hold_bars,
+    )
+
+
+def _flat(mgr: TrailingStopManager, n: int, price: float = 50000.0) -> None:
+    for _ in range(n):
+        mgr.on_new_bar(_bar(high=price, low=price, close=price))
+
+
+class TestTimeStop:
+    def _register(self, mgr, side=Side.LONG, entry="50000", stop="49100"):
+        mgr.register("p", side, "sl", Decimal(stop), Decimal(entry), Decimal("100"))
+
+    def test_unproven_position_cut_at_time_stop_bars(self):
+        mgr = _ts_manager(time_stop_bars=3)
+        self._register(mgr)
+        _flat(mgr, 2)                       # bars_held = 2 < 3 → nothing yet
+        assert mgr.due_time_exits() == []
+        _flat(mgr, 1)                       # bars_held = 3 → due
+        exits = mgr.due_time_exits()
+        assert len(exits) == 1
+        assert exits[0].position_id == "p"
+        assert exits[0].reason == "time_stop"
+        assert exits[0].bars_held == 3
+        assert exits[0].side == Side.LONG
+
+    def test_proven_winner_is_exempt_from_time_stop(self):
+        mgr = _ts_manager(time_stop_bars=3)
+        self._register(mgr)
+        mgr.on_new_bar(_bar(high=50500, low=50000, close=50100))  # +1% → arms breakeven
+        _flat(mgr, 5)                       # well past time_stop_bars
+        assert mgr.due_time_exits() == []   # be_armed → never time-stopped
+
+    def test_max_hold_cap_closes_even_a_proven_winner(self):
+        mgr = _ts_manager(time_stop_bars=0, max_hold_bars=3)
+        self._register(mgr)
+        mgr.on_new_bar(_bar(high=50500, low=50000, close=50100))  # armed (proven winner)
+        _flat(mgr, 2)                       # bars_held = 3
+        exits = mgr.due_time_exits()
+        assert len(exits) == 1
+        assert exits[0].reason == "max_hold"
+        assert exits[0].bars_held == 3
+
+    def test_disabled_never_flags(self):
+        mgr = _ts_manager(time_stop_bars=0, max_hold_bars=0)
+        self._register(mgr)
+        _flat(mgr, 10)
+        assert mgr.due_time_exits() == []
+
+    def test_not_reported_after_on_close(self):
+        mgr = _ts_manager(time_stop_bars=2)
+        self._register(mgr)
+        _flat(mgr, 2)
+        assert len(mgr.due_time_exits()) == 1
+        mgr.on_close("p")                   # caller closed it
+        assert mgr.due_time_exits() == []   # gone → not re-reported
+
+    def test_bars_held_counts_only_5m_bars(self):
+        mgr = _ts_manager(time_stop_bars=1)
+        self._register(mgr)
+        mgr.on_new_bar(_bar(high=50000, low=50000, close=50000, interval=Interval.M15))
+        assert mgr.due_time_exits() == []   # M15 must not age the position
+        mgr.on_new_bar(_bar(high=50000, low=50000, close=50000))  # one real 5m bar
+        assert len(mgr.due_time_exits()) == 1

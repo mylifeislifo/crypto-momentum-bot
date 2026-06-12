@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -164,6 +164,18 @@ class TrailUpdate:
     old_sl_order_id: str
     new_stop_price: Decimal
     old_stop_price: Decimal
+    ts: datetime
+
+
+@dataclass(frozen=True)
+class ForcedExit:
+    """A position the trail manager wants closed at market for a non-price reason
+    (time-based). Distinct from a price stop (SL / trail), which fills on the
+    exchange. order_manager turns this into a reduce-only market close."""
+    position_id: str
+    side: Side
+    reason: str          # "time_stop" (unproven cut) | "max_hold" (hard cap)
+    bars_held: int
     ts: datetime
 
 
