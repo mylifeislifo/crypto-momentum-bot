@@ -12,7 +12,7 @@
 ## 0. 가장 먼저 할 일 — `doc/` 전체 무조건 흡수
 
 새 세션은 **어떤 작업·답변에도 착수하기 전에 `doc/` 하위 가이드 전부를 무조건 읽는다.**
-일부만 읽거나 "도메인에 맞는 것만" 고르는 것을 금지한다. 아래 10개 파일을 **전부** 흡수한다:
+일부만 읽거나 "도메인에 맞는 것만" 고르는 것을 금지한다. 아래 11개 파일을 **전부** 흡수한다:
 
 1. `CLAUDE.md` (루트) — 진입점, 핵심 룰 5종, 우선순위
 2. `doc/README.md` — 운영 매뉴얼 구조
@@ -25,6 +25,7 @@
 9. `doc/skills/infra-debug.md` — 인프라 디버깅 런북
 10. `doc/skills/progressive-gate.md` — 점진 진입 게이트
 11. `doc/skills/audit-log.md` — 감사 로그 표준
+12. `doc/skills/signal-validation.md` — 신호 검증 방법론 (정량 발견 자기기만 방지)
 
 > **건너뛰지 말 것.** 위 전부를 흡수하기 전에는 트레이딩·시크릿·자동화·인프라 어떤 작업도 손대지 않는다.
 >
@@ -56,7 +57,7 @@
 - `doc/domains/security/rules.md` — **최상위**, 시크릿 평문 금지
 - `doc/domains/trading/rules.md` — 레버리지 2x·Decimal 강제·paper 게이트·퀀트 실행 표준
 - `doc/domains/automation/rules.md` — 웹 자동화·HITL
-- `doc/skills/` — `bot-ops` / `system-health` / `infra-debug` / `progressive-gate` / `audit-log`
+- `doc/skills/` — `bot-ops` / `system-health` / `infra-debug` / `progressive-gate` / `audit-log` / `signal-validation`
 
 ### 봇 코드 (`src/bot/`)
 | 영역 | 경로 | 역할 |
