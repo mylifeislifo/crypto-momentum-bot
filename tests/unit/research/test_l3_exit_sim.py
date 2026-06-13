@@ -7,12 +7,13 @@ that reverts never round-trips to the initial stop.
 """
 
 import logging
+import random
 from decimal import Decimal
 
 import structlog
 
 from bot.core.enums import Side
-from bot.research.l3_exit_sim import path_bars, simulate
+from bot.research.l3_exit_sim import backtest_exits, path_bars, simulate
 
 structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING))
 
@@ -84,3 +85,43 @@ def test_short_winner_mirrors_long():
     )
     assert o.net_return > Decimal("0.25")   # ~+33% (geometric; less than the long's +49%)
     assert o.be_armed is True
+
+
+# ---------------------------------------------------------------------------
+# Multi-entry backtest (real-data tuning harness) — verified on synthetic paths
+# ---------------------------------------------------------------------------
+
+def _smooth_bars(closes, wick=0.0005):
+    return path_bars([c * (1 + wick) for c in closes],
+                     [c * (1 - wick) for c in closes], closes)
+
+
+def test_backtest_exits_uptrend_runs_winners_with_asymmetry():
+    closes = [50000 * (1.001 ** i) for i in range(400)]   # steady uptrend
+    s = backtest_exits(_smooth_bars(closes), side=Side.LONG, entry_stride=24, time_stop_bars=48)
+    assert s.n_trades > 5
+    assert s.proven_frac > 0.5                 # most entries reach +1% in an uptrend
+    assert s.avg_hold_winners > s.avg_hold_losers   # winner-asymmetry
+    assert s.mean_return > 0                   # uptrend → positive expectancy
+
+
+def test_backtest_exits_reports_full_stats():
+    closes = [50000 * (1.0005 ** i) for i in range(300)]
+    s = backtest_exits(_smooth_bars(closes), side=Side.LONG, entry_stride=24)
+    assert s.n_trades > 0
+    assert 0.0 <= s.win_rate <= 1.0
+    assert sum(s.reason_counts.values()) == s.n_trades
+    assert "n=" in s.report()
+
+
+def test_tighter_trail_whipsaws_at_least_as_much_as_loose():
+    rng = random.Random(1)
+    price, closes = 50000.0, []
+    for _ in range(3000):                       # choppy flat random walk
+        price *= (1 + rng.gauss(0, 0.001))
+        closes.append(price)
+    bars = path_bars([c * 1.001 for c in closes], [c * 0.999 for c in closes], closes)
+    tight = backtest_exits(bars, atr_multiplier=1.5, time_stop_bars=48, entry_stride=24)
+    loose = backtest_exits(bars, atr_multiplier=3.0, time_stop_bars=48, entry_stride=24)
+    assert tight.n_trades == loose.n_trades     # identical entry set (config isolated)
+    assert tight.whipsaw_frac >= loose.whipsaw_frac   # the #17 finding, quantified
