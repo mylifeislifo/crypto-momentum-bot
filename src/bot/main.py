@@ -30,12 +30,13 @@ import structlog
 
 from .config.loader import load_config
 from .config.schema import AppConfig, Secrets
-from .core.enums import Interval, MarginType, Mode
+from .core.enums import Exchange, Interval, MarginType, Mode
 from .core.logging import setup_logging
 from .data import bar_builder as _bar_mod
 from .data import pipeline_oi_funding, pipeline_orderbook, pipeline_sentiment
 from .data.bar_builder import BarBuilder
 from .execution.binance_futures import BinanceFuturesGateway
+from .execution.bitget_futures import BitgetFuturesGateway
 from .execution.gateway_base import FuturesGateway
 from .execution.order_manager import OrderManager
 from .execution.paper_futures import PaperFuturesGateway
@@ -50,6 +51,14 @@ logger = structlog.get_logger(__name__)
 def _build_gateway(config: AppConfig, secrets: Secrets) -> FuturesGateway:
     if config.mode == Mode.PAPER:
         return PaperFuturesGateway(initial_balance=config.risk.risk_per_trade and __import__('decimal').Decimal("10000"))
+    if config.exchange.name == Exchange.BITGET:
+        return BitgetFuturesGateway(
+            api_key=secrets.bitget_api_key,
+            secret_key=secrets.bitget_secret_key,
+            passphrase=secrets.bitget_passphrase,
+            product_type=config.exchange.product_type,
+            margin_coin=config.exchange.margin_coin,
+        )
     return BinanceFuturesGateway(
         api_key=secrets.binance_api_key,
         secret_key=secrets.binance_secret_key,
@@ -65,8 +74,7 @@ async def main(config_path: str = "config/default.yaml", override_path: Optional
 
     # --- build gateway ---
     gateway = _build_gateway(config, secrets)
-    if isinstance(gateway, BinanceFuturesGateway):
-        await gateway.connect()
+    await gateway.connect()   # no-op for paper; opens the REST/WS session for live
 
     # --- startup: set leverage + margin mode ---
     try:
@@ -183,7 +191,6 @@ async def main(config_path: str = "config/default.yaml", override_path: Optional
         else:
             log.info("bot.positions_held_across_restart")
 
-        if isinstance(gateway, BinanceFuturesGateway):
-            await gateway.disconnect()
+        await gateway.disconnect()   # no-op for paper
 
         log.info("bot.stopped")

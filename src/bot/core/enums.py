@@ -45,6 +45,11 @@ class MarginType(str, Enum):
     CROSSED = "CROSSED"
 
 
+class Exchange(str, Enum):
+    BINANCE = "binance"
+    BITGET = "bitget"
+
+
 class PositionSide(str, Enum):
     LONG = "LONG"
     SHORT = "SHORT"

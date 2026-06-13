@@ -1,15 +1,20 @@
 from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ..core.enums import MarginType, Mode
+from ..core.enums import Exchange, MarginType, Mode
 
 
 class ExchangeCfg(BaseModel):
+    name: Exchange = Exchange.BINANCE       # which exchange gateway to use in live mode
     symbol: str = "BTCUSDT"
     max_leverage: int = 2
     margin_mode: MarginType = MarginType.ISOLATED
     fee_maker_bps: float = 2.0
     fee_taker_bps: float = 5.0
+    # Bitget-only (ignored by other exchanges). product_type "USDT-FUTURES" live,
+    # "SUSDT-FUTURES" demo.
+    product_type: str = "USDT-FUTURES"
+    margin_coin: str = "USDT"
 
 
 class DataCfg(BaseModel):
@@ -158,6 +163,9 @@ class Secrets(BaseSettings):
 
     binance_api_key: str = ""
     binance_secret_key: str = ""
+    bitget_api_key: str = ""
+    bitget_secret_key: str = ""
+    bitget_passphrase: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     coinglass_api_key: str = ""

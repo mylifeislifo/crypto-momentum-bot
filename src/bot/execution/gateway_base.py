@@ -10,6 +10,14 @@ from ..core.types import Fill, Order, Position
 
 class FuturesGateway(ABC):
 
+    async def connect(self) -> None:
+        """Open any network session. No-op for gateways that don't need one (paper)."""
+        return None
+
+    async def disconnect(self) -> None:
+        """Close any network session. No-op by default."""
+        return None
+
     @abstractmethod
     async def set_leverage(self, symbol: str, leverage: int) -> None: ...
 

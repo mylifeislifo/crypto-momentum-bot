@@ -1,0 +1,25 @@
+# Bitget USDT-M perpetual — the SAME winner-asymmetry bot (src/bot/), on Bitget.
+#
+# The exit discipline (breakeven floor + time stop + ATR trail + place-before-cancel
+# SL) is exchange-agnostic; only the execution gateway changes (BitgetFuturesGateway).
+#
+# Ships in PAPER (simulated) so this override is safe to run as-is — the Bitget LIVE
+# gateway is only constructed when mode: live. Going live is a deliberate, gated flip:
+#   1. validate on Bitget demo first (product_type: SUSDT-FUTURES, symbol: SBTCSUSDT)
+#   2. clear the §1.3 gate (backtest → walkforward → paper 7d → 10% seed)
+#   3. set mode: live + BITGET_API_KEY / BITGET_SECRET_KEY / BITGET_PASSPHRASE in .env
+#      (progressive-gate §2.4 — explicit approval required)
+mode: paper
+dry_run: true
+
+exchange:
+  name: bitget
+  symbol: BTCUSDT
+  product_type: USDT-FUTURES    # demo: SUSDT-FUTURES
+  margin_coin: USDT
+  max_leverage: 2               # trading §1.1 hard cap
+  margin_mode: ISOLATED
+
+logging:
+  level: INFO
+  json_format: false
