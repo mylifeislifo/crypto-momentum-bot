@@ -23,13 +23,15 @@ package + stdlib.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from statistics import fmean, median
 
 from ..core.enums import Interval, Side
 from ..core.types import Bar
-from ..risk.trail import TrailingStopManager
+from ..risk.trail import TrailingStopManager, compute_atr
 
 _T0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
 _STEP = timedelta(minutes=5)
@@ -126,3 +128,114 @@ def simulate(
 
     be = mgr._positions["p"].be_armed
     return ExitOutcome("open", last_close, held, ret(last_close), be)
+
+
+# ============================================================================
+# Multi-entry backtest — tune the exit discipline on REAL price paths
+# ============================================================================
+#
+# To tune exit parameters (time_stop_bars, trail multiplier, breakeven) we need
+# many realised exits, not the handful the strict live confluence gate produces.
+# The exit discipline is entry-agnostic (R5: "alpha is in the exit"), so we
+# sample entries at a fixed stride across a real 5m series and measure the exit
+# OUTCOME distribution under a given config. Comparing configs over the SAME
+# entry set isolates the effect of the exit rule.
+
+
+@dataclass
+class ExitStats:
+    n_trades: int
+    win_rate: float
+    mean_return: float          # expectancy per trade (fraction)
+    median_return: float
+    proven_frac: float          # fraction that armed breakeven (became "winners")
+    avg_hold_winners: float     # mean bars_held for net>0 trades
+    avg_hold_losers: float      # mean bars_held for net<=0 trades
+    asymmetry_ratio: float      # avg_hold_winners / avg_hold_losers (1491 target ~3.8)
+    whipsaw_frac: float         # unproven trades stopped early at a loss (pre-proof trail cut)
+    reason_counts: dict[str, int]
+
+    def report(self) -> str:
+        rc = "  ".join(f"{k}={v}" for k, v in sorted(self.reason_counts.items()))
+        return (
+            f"n={self.n_trades}  win={self.win_rate:.1%}  E[r]={self.mean_return:+.3%}  "
+            f"med={self.median_return:+.3%}  proven={self.proven_frac:.1%}\n"
+            f"    hold winners={self.avg_hold_winners:.0f}  losers={self.avg_hold_losers:.0f}  "
+            f"asymmetry={self.asymmetry_ratio:.2f}x  whipsaw={self.whipsaw_frac:.1%}\n"
+            f"    exits: {rc}"
+        )
+
+
+# A whipsaw = an unproven position stopped at a loss within this many bars (~30min),
+# i.e. the pre-proof trail clipped it before it had a chance to run. FIXED (not derived
+# from time_stop_bars) so the metric is comparable across a parameter sweep.
+_WHIPSAW_WINDOW_BARS = 6
+
+
+def _aggregate(outcomes: list[ExitOutcome]) -> ExitStats:
+    n = len(outcomes)
+    if n == 0:
+        return ExitStats(0, float("nan"), float("nan"), float("nan"), float("nan"),
+                         float("nan"), float("nan"), float("nan"), float("nan"), {})
+    rets = [float(o.net_return) for o in outcomes]
+    hold_win = [o.bars_held for o in outcomes if float(o.net_return) > 0]
+    hold_loss = [o.bars_held for o in outcomes if float(o.net_return) <= 0]
+    awh = fmean(hold_win) if hold_win else 0.0
+    awl = fmean(hold_loss) if hold_loss else 0.0
+    whipsaw = sum(
+        1 for o in outcomes
+        if (not o.be_armed) and o.reason == "stop_loss"
+        and float(o.net_return) < 0 and o.bars_held <= _WHIPSAW_WINDOW_BARS
+    )
+    return ExitStats(
+        n_trades=n,
+        win_rate=sum(1 for r in rets if r > 0) / n,
+        mean_return=fmean(rets),
+        median_return=float(median(rets)),
+        proven_frac=sum(1 for o in outcomes if o.be_armed) / n,
+        avg_hold_winners=awh,
+        avg_hold_losers=awl,
+        asymmetry_ratio=(awh / awl if awl else float("inf")),
+        whipsaw_frac=whipsaw / n,
+        reason_counts=dict(Counter(o.reason for o in outcomes)),
+    )
+
+
+def backtest_exits(
+    bars: list[Bar],
+    *,
+    side: Side = Side.LONG,
+    entry_stride: int = 24,
+    horizon: int = 1000,
+    warmup: int = 50,
+    long_sl_pct: float = -0.018,
+    short_sl_pct: float = -0.0075,
+    breakeven_trigger_pct: float = 0.01,
+    breakeven_offset_pct: float = 0.0012,
+    time_stop_bars: int = 48,
+    max_hold_bars: int = 0,
+    atr_multiplier: float = 1.5,
+    atr_period: int = 5,
+) -> ExitStats:
+    """Sample entries every `entry_stride` bars (after `warmup`) and run the real
+    L3 exit logic forward up to `horizon` bars each. Returns aggregate exit-discipline
+    stats for the given config — the per-config row of a tuning sweep."""
+    outcomes: list[ExitOutcome] = []
+    n = len(bars)
+    for i in range(warmup, n - 1, entry_stride):
+        entry_price = bars[i].open
+        if side == Side.LONG:
+            initial_stop = (entry_price * (Decimal("1") + Decimal(str(long_sl_pct)))).quantize(Decimal("0.01"))
+        else:
+            initial_stop = (entry_price * (Decimal("1") + Decimal(str(abs(short_sl_pct))))).quantize(Decimal("0.01"))
+        atr0 = compute_atr(bars[max(0, i - warmup):i], atr_period)
+        if atr0 <= 0:
+            atr0 = entry_price * Decimal("0.005")
+        outcomes.append(simulate(
+            bars[i:i + horizon], side=side, entry_price=entry_price,
+            initial_stop=initial_stop, atr0=atr0,
+            breakeven_trigger_pct=breakeven_trigger_pct, breakeven_offset_pct=breakeven_offset_pct,
+            time_stop_bars=time_stop_bars, max_hold_bars=max_hold_bars,
+            atr_multiplier=atr_multiplier, atr_period=atr_period,
+        ))
+    return _aggregate(outcomes)
